@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kamera & Video Remote Control</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            text-align: center;
+        }
+        .video-container {
+            position: relative;
+            margin-bottom: 20px;
+        }
+        #video {
+            width: 100%;
+            max-width: 640px;
+            background-color: #000;
+            border-radius: 8px;
+        }
+        #canvas, #recordedVideo {
+            display: none;
+            max-width: 100%;
+            margin-top: 10px;
+        }
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        button {
+            padding: 10px 15px;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            opacity: 0.9;
+        }
+        button:disabled {
+            background-color: #cccccc !important;
+            cursor: not-allowed;
+        }
+        #startCamera {
+            background-color: #4CAF50;
+        }
+        #stopCamera {
+            background-color: #f44336;
+        }
+        #captureBtn {
+            background-color: #2196F3;
+        }
+        #startRecordBtn {
+            background-color: #FF9800;
+        }
+        #stopRecordBtn {
+            background-color: #9C27B0;
+        }
+        #switchCameraBtn {
+            background-color: #607D8B;
+        }
+        #flashBtn {
+            background-color: #FFC107;
+            color: #000;
+        }
+        .media-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            justify-content: center;
+        }
+        .media-section {
+            flex: 1;
+            min-width: 300px;
+        }
+        .gallery {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            justify-content: center;
+            margin-top: 20px;
+        }
+        .gallery img, .gallery video {
+            width: 100px;
+            height: 100px;
+            object-fit: cover;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: transform 0.3s;
+        }
+        .gallery img:hover, .gallery video:hover {
+            transform: scale(1.1);
+        }
+        .timer {
+            font-size: 18px;
+            margin: 10px 0;
+            font-weight: bold;
+        }
+        .remote-control-section {
+            margin-top: 30px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            background-color: #f9f9f9;
+        }
+        .connection-status {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        .connected {
+            background-color: #4CAF50;
+        }
+        .disconnected {
+            background-color: #f44336;
+        }
+        .remote-controls {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        .remote-controls button {
+            flex: 1;
+            min-width: 120px;
+        }
+        #remoteCode {
+            font-family: monospace;
+            font-size: 18px;
+            font-weight: bold;
+            padding: 8px;
+            background-color: #eee;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>Kamera & Video Remote Control</h1>
+    
+    <div class="media-container">
+        <div class="media-section">
+            <div class="video-container">
+                <video id="video" playsinline autoplay></video>
+                <canvas id="canvas"></canvas>
+                <video id="recordedVideo" controls></video>
+            </div>
+            
+            <div class="controls">
+                <button id="startCamera">Mulai Kamera</button>
+                <button id="stopCamera" disabled>Hentikan Kamera</button>
+                <button id="switchCameraBtn" disabled>Ganti Kamera</button>
+                <button id="flashBtn" disabled>Flash</button>
+            </div>
+            
+            <div class="controls">
+                <button id="captureBtn" disabled>Ambil Foto</button>
+                <button id="startRecordBtn" disabled>Mulai Rekam</button>
+                <button id="stopRecordBtn" disabled>Stop Rekam</button>
+            </div>
+            
+            <div id="timer" class="timer"></div>
+        </div>
+    </div>
+    
+    <div class="remote-control-section">
+        <h3>Remote Control</h3>
+        <p>Status: <span id="connectionStatus"><span class="connection-status disconnected"></span>Terputus</span></p>
+        <p>Kode Remote: <span id="remoteCode">-</span></p>
+        <p>Bagikan kode ini untuk mengontrol dari perangkat lain</p>
+        
+        <div class="remote-controls">
+            <button id="remoteStartCamera" disabled>Mulai Kamera</button>
+            <button id="remoteStopCamera" disabled>Hentikan Kamera</button>
+            <button id="remoteCapture" disabled>Ambil Foto</button>
+            <button id="remoteStartRecord" disabled>Mulai Rekam</button>
+            <button id="remoteStopRecord" disabled>Stop Rekam</button>
+            <button id="remoteSwitchCamera" disabled>Ganti Kamera</button>
+            <button id="remoteFlash" disabled>Flash</button>
+        </div>
+    </div>
+    
+    <div>
+        <h3>Galeri Media</h3>
+        <div id="gallery" class="gallery"></div>
+    </div>
+
+    <script>
+        'use strict';
+        
+        // Elements
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const recordedVideo = document.getElementById('recordedVideo');
+        const startBtn = document.getElementById('startCamera');
+        const stopBtn = document.getElementById('stopCamera');
+        const captureBtn = document.getElementById('captureBtn');
+        const startRecordBtn = document.getElementById('startRecordBtn');
+        const stopRecordBtn = document.getElementById('stopRecordBtn');
+        const switchBtn = document.getElementById('switchCameraBtn');
+        const flashBtn = document.getElementById('flashBtn');
+        const gallery = document.getElementById('gallery');
+        const timerElement = document.getElementById('timer');
+        
+        // Remote control elements
+        const connectionStatus = document.getElementById('connectionStatus');
+        const remoteCodeElement = document.getElementById('remoteCode');
+        const remoteStartCamera = document.getElementById('remoteStartCamera');
+        const remoteStopCamera = document.getElementById('remoteStopCamera');
+        const remoteCapture = document.getElementById('remoteCapture');
+        const remoteStartRecord = document.getElementById('remoteStartRecord');
+        const remoteStopRecord = document.getElementById('remoteStopRecord');
+        const remoteSwitchCamera = document.getElementById('remoteSwitchCamera');
+        const remoteFlash = document.getElementById('remoteFlash');
+        
+        // Variables
+        let stream = null;
+        let mediaRecorder = null;
+        let recordedChunks = [];
+        let currentFacingMode = 'user';
+        let flashActive = false;
+        let track = null;
+        let recordingTimer = null;
+        let recordingSeconds = 0;
+        
+        // Remote control variables
+        let socket = null;
+        let remoteCode = null;
+        let isConnected = false;
+        
+        // Camera constraints
+        const constraints = {
+            audio: true,
+            video: {
+                facingMode: currentFacingMode,
+                width: { ideal: 1280 },
+                height: { ideal: 720 }
+            }
+        };
+        
+        // Generate random remote code
+        function generateRemoteCode() {
+            return Math.random().toString(36).substring(2, 8).toUpperCase();
+        }
+        
+        // Initialize WebSocket connection
+        function initWebSocket() {
+            // In a real implementation, you would connect to your WebSocket server
+            // For this example, we'll simulate the connection
+            
+            remoteCode = generateRemoteCode();
+            remoteCodeElement.textContent = remoteCode;
+            
+            // Simulate connection
+            setTimeout(() => {
+                isConnected = true;
+                updateConnectionStatus();
+                enableRemoteControls();
+                
+                // Simulate receiving commands (for demonstration)
+                simulateRemoteCommands();
+            }, 2000);
+        }
+        
+        // Update connection status display
+        function updateConnectionStatus() {
+            const statusIndicator = connectionStatus.querySelector('.connection-status');
+            if (isConnected) {
+                statusIndicator.className = 'connection-status connected';
+                connectionStatus.innerHTML = '<span class="connection-status connected"></span>Terhubung';
+            } else {
+                statusIndicator.className = 'connection-status disconnected';
+                connectionStatus.innerHTML = '<span class="connection-status disconnected"></span>Terputus';
+            }
+        }
+        
+        // Enable remote control buttons
+        function enableRemoteControls() {
+            remoteStartCamera.disabled = false;
+            remoteStopCamera.disabled = false;
+            remoteCapture.disabled = false;
+            remoteStartRecord.disabled = false;
+            remoteStopRecord.disabled = false;
+            remoteSwitchCamera.disabled = false;
+            remoteFlash.disabled = false;
+        }
+        
+        // Send command to remote (in a real implementation, this would send via WebSocket)
+        function sendCommandToRemote(command, data = {}) {
+            if (isConnected) {
+                console.log(`Sending command to remote: ${command}`, data);
+                // In a real implementation, you would send this via WebSocket
+                // socket.send(JSON.stringify({ command, data }));
+            }
+        }
+        
+        // Simulate receiving remote commands (for demonstration)
+        function simulateRemoteCommands() {
+            // This is just for demonstration - in a real implementation,
+            // you would receive commands via WebSocket
+            console.log("Remote control ready. Commands can be received from remote devices.");
+        }
+        
+        // Start camera
+        async function startCamera() {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia(constraints);
+                video.srcObject = stream;
+                
+                // Enable controls
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                captureBtn.disabled = false;
+                startRecordBtn.disabled = false;
+                switchBtn.disabled = false;
+                
+                // Check for flash support
+                track = stream.getVideoTracks()[0];
+                if (track && track.getCapabilities().torch) {
+                    flashBtn.disabled = false;
+                    remoteFlash.disabled = false;
+                } else {
+                    flashBtn.disabled = true;
+                    remoteFlash.disabled = true;
+                }
+                
+                // Set canvas size to match video
+                const settings = track.getSettings();
+                canvas.width = settings.width;
+                canvas.height = settings.height;
+                
+                // Initialize media recorder
+                initMediaRecorder();
+                
+                // Notify remote
+                sendCommandToRemote('cameraStarted');
+                
+            } catch (err) {
+                console.error('Error accessing camera:', err);
+                alert('Tidak dapat mengakses kamera: ' + err.message);
+            }
+        }
+        
+        // Initialize media recorder
+        function initMediaRecorder() {
+            recordedChunks = [];
+            const options = { mimeType: 'video/webm; codecs=vp9' };
+            
+            try {
+                mediaRecorder = new MediaRecorder(stream, options);
+                
+                mediaRecorder.ondataavailable = function(e) {
+                    if (e.data.size > 0) {
+                        recordedChunks.push(e.data);
+                    }
+                };
+                
+                mediaRecorder.onstop = function() {
+                    const blob = new Blob(recordedChunks, { type: 'video/webm' });
+                    const videoURL = URL.createObjectURL(blob);
+                    recordedVideo.src = videoURL;
+                    recordedVideo.style.display = 'block';
+                    
+                    // Add to gallery
+                    addVideoToGallery(videoURL);
+                    
+                    // Reset timer
+                    clearInterval(recordingTimer);
+                    timerElement.textContent = '';
+                    recordingSeconds = 0;
+                    
+                    // Notify remote
+                    sendCommandToRemote('recordingStopped', { duration: recordingSeconds });
+                };
+                
+            } catch (e) {
+                console.error('Error initializing media recorder:', e);
+            }
+        }
+        
+        // Stop camera
+        function stopCamera() {
+            stopRecording();
+            
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                video.srcObject = null;
+                stream = null;
+                
+                // Disable controls
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+                captureBtn.disabled = true;
+                startRecordBtn.disabled = true;
+                stopRecordBtn.disabled = true;
+                switchBtn.disabled = true;
+                flashBtn.disabled = true;
+                
+                // Turn off flash if active
+                if (flashActive) {
+                    toggleFlash();
+                }
+                
+                // Notify remote
+                sendCommandToRemote('cameraStopped');
+            }
+        }
+        
+        // Capture photo
+        function capturePhoto() {
+            const context = canvas.getContext('2d');
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+            
+            // Create image element for gallery
+            const imgData = canvas.toDataURL('image/png');
+            addImageToGallery(imgData);
+            
+            // Notify remote
+            sendCommandToRemote('photoCaptured');
+        }
+        
+        // Start recording
+        function startRecording() {
+            if (mediaRecorder && mediaRecorder.state !== 'recording') {
+                recordedChunks = [];
+                mediaRecorder.start(100); // Collect data every 100ms
+                startRecordBtn.disabled = true;
+                stopRecordBtn.disabled = false;
+                remoteStartRecord.disabled = true;
+                remoteStopRecord.disabled = false;
+                
+                // Start timer
+                recordingSeconds = 0;
+                updateTimer();
+                recordingTimer = setInterval(updateTimer, 1000);
+                
+                // Notify remote
+                sendCommandToRemote('recordingStarted');
+            }
+        }
+        
+        // Stop recording
+        function stopRecording() {
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                mediaRecorder.stop();
+                startRecordBtn.disabled = false;
+                stopRecordBtn.disabled = true;
+                remoteStartRecord.disabled = false;
+                remoteStopRecord.disabled = true;
+                
+                // Stop timer
+                clearInterval(recordingTimer);
+                
+                // Notify remote
+                sendCommandToRemote('recordingStopped', { duration: recordingSeconds });
+            }
+        }
+        
+        // Update recording timer
+        function updateTimer() {
+            recordingSeconds++;
+            const minutes = Math.floor(recordingSeconds / 60);
+            const seconds = recordingSeconds % 60;
+            timerElement.textContent = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+        }
+        
+        // Switch between front and back camera
+        async function switchCamera() {
+            if (stream) {
+                // Stop current stream and recording
+                stopRecording();
+                stopCamera();
+                
+                // Toggle facing mode
+                currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
+                
+                // Restart camera with new facing mode
+                await startCamera();
+                
+                // Notify remote
+                sendCommandToRemote('cameraSwitched', { facingMode: currentFacingMode });
+            }
+        }
+        
+        // Toggle flash
+        async function toggleFlash() {
+            if (track && track.getCapabilities().torch) {
+                try {
+                    await track.applyConstraints({
+                        advanced: [{ torch: !flashActive }]
+                    });
+                    flashActive = !flashActive;
+                    flashBtn.textContent = flashActive ? 'Matikan Flash' : 'Nyalakan Flash';
+                    remoteFlash.textContent = flashActive ? 'Matikan Flash' : 'Nyalakan Flash';
+                    
+                    // Notify remote
+                    sendCommandToRemote('flashToggled', { active: flashActive });
+                } catch (err) {
+                    console.error('Error toggling flash:', err);
+                }
+            }
+        }
+        
+        // Add image to gallery
+        function addImageToGallery(imgData) {
+            const imgElement = document.createElement('img');
+            imgElement.src = imgData;
+            
+            imgElement.onclick = function() {
+                const link = document.createElement('a');
+                link.download = 'photo-' + new Date().getTime() + '.png';
+                link.href = imgData;
+                link.click();
+            };
+            
+            gallery.appendChild(imgElement);
+        }
+        
+        // Add video to gallery
+        function addVideoToGallery(videoURL) {
+            const videoElement = document.createElement('video');
+            videoElement.src = videoURL;
+            videoElement.controls = true;
+            videoElement.style.width = '100px';
+            videoElement.style.height = '100px';
+            
+            const container = document.createElement('div');
+            container.appendChild(videoElement);
+            
+            const downloadBtn = document.createElement('button');
+            downloadBtn.textContent = 'Unduh';
+            downloadBtn.style.display = 'block';
+            downloadBtn.style.width = '100%';
+            downloadBtn.style.padding = '2px 5px';
+            downloadBtn.style.marginTop = '5px';
+            downloadBtn.style.fontSize = '12px';
+            downloadBtn.style.backgroundColor = '#4CAF50';
+            
+            downloadBtn.onclick = function() {
+                const link = document.createElement('a');
+                link.download = 'video-' + new Date().getTime() + '.webm';
+                link.href = videoURL;
+                link.click();
+            };
+            
+            container.appendChild(downloadBtn);
+            gallery.appendChild(container);
+        }
+        
+        // Initialize remote control
+        function initRemoteControl() {
+            // Event listeners for remote control buttons
+            remoteStartCamera.addEventListener('click', startCamera);
+            remoteStopCamera.addEventListener('click', stopCamera);
+            remoteCapture.addEventListener('click', capturePhoto);
+            remoteStartRecord.addEventListener('click', startRecording);
+            remoteStopRecord.addEventListener('click', stopRecording);
+            remoteSwitchCamera.addEventListener('click', switchCamera);
+            remoteFlash.addEventListener('click', toggleFlash);
+            
+            // Initialize WebSocket connection
+            initWebSocket();
+        }
+        
+        // Event listeners for local controls
+        startBtn.addEventListener('click', startCamera);
+        stopBtn.addEventListener('click', stopCamera);
+        captureBtn.addEventListener('click', capturePhoto);
+        startRecordBtn.addEventListener('click', startRecording);
+        stopRecordBtn.addEventListener('click', stopRecording);
+        switchBtn.addEventListener('click', switchCamera);
+        flashBtn.addEventListener('click', toggleFlash);
+        
+        // Initialize remote control when page loads
+        window.addEventListener('load', initRemoteControl);
+    </script>
+</body>
+</html>
