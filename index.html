@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Redirect to Kamera Remote Control</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            padding: 50px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+        }
+        .btn {
+            display: inline-block;
+            padding: 12px 24px;
+            background-color: #4CAF50;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            font-size: 18px;
+            margin: 20px 0;
+            transition: background-color 0.3s;
+        }
+        .btn:hover {
+            background-color: #45a049;
+        }
+        .note {
+            background-color: #fff3cd;
+            border: 1px solid #ffeaa7;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 20px;
+            text-align: left;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Kamera & Video Remote Control</h1>
+        <p>Aplikasi untuk mengontrol kamera dan merekam video melalui browser</p>
+        
+        <a href="CRC.html" class="btn">Buka Aplikasi Kamera</a>
+        
+        <div class="note">
+            <strong>Catatan:</strong>
+            <ul>
+                <li>Aplikasi memerlukan akses ke kamera dan mikrofon</li>
+                <li>Pastikan browser mengizinkan permission</li>
+                <li>Fitur remote control memerlukan koneksi WebSocket (backend server)</li>
+                <li>Fitur dasar (foto, rekam, ganti kamera) akan bekerja</li>
+            </ul>
+        </div>
+        
+        <div style="margin-top: 30px;">
+            <h3>Fitur yang Tersedia:</h3>
+            <p>✅ Ambil foto dari kamera</p>
+            <p>✅ Rekam video</p>
+            <p>✅ Ganti kamera depan/belakang</p>
+            <p>✅ Flash (jika didukung)</p>
+            <p>⏸️ Remote control (membutuhkan server backend)</p>
+        </div>
+    </div>
+    
+    <script>
+        // Auto redirect setelah 3 detik
+        setTimeout(function() {
+            window.location.href = "CRC.html";
+        }, 3000);
+    </script>
+</body>
+</html>
