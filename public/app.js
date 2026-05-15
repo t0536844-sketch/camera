@@ -200,10 +200,15 @@ function generateCode() {
     roomCodeInput.value = code;
 }
 
-function startBroadcast() {
+async function startBroadcast() {
     const roomCode = roomCodeInput.value.trim().toUpperCase() || generateCodeAndSet();
     const deviceName = deviceNameInput.value.trim() || 'Kamera';
 
+    // Start camera FIRST — don't wait for server
+    await startCamera();
+    if (!stream) return; // Camera failed
+
+    // Then tell server
     socket.emit('start-broadcast', {
         roomCode,
         deviceInfo: {
@@ -248,7 +253,7 @@ async function startCamera() {
         console.log('[Camera] Requesting camera access...');
         stream = await navigator.mediaDevices.getUserMedia({
             video: { facingMode: currentFacingMode, width: { ideal: 1280 }, height: { ideal: 720 } },
-            audio: true
+            audio: false  // no audio = lebih reliable di mobile
         });
 
         console.log('[Camera] Camera access granted, tracks:', stream.getTracks().length);
@@ -271,7 +276,7 @@ async function startCamera() {
         const capabilities = videoTrack ? videoTrack.getCapabilities() : {};
         document.getElementById('flashBtn').disabled = !capabilities.torch;
 
-        // Init media recorder
+        // Init media recorder (video only)
         initMediaRecorder();
 
     } catch (err) {
@@ -283,6 +288,22 @@ async function startCamera() {
             errorMsg += '❌ Tidak ditemukan kamera di device ini.';
         } else if (err.name === 'NotReadableError') {
             errorMsg += '❌ Kamera sedang digunakan oleh aplikasi lain.';
+        } else if (err.name === 'OverconstrainedError') {
+            errorMsg += '❌ Kamera tidak mendukung resolusi yang diminta. Mencoba fallback...';
+            // Fallback: lower resolution
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: currentFacingMode, width: { ideal: 640 }, height: { ideal: 480 } }
+                });
+                videoPreview.srcObject = stream;
+                await videoPreview.play();
+                videoTrack = stream.getVideoTracks()[0];
+                initMediaRecorder();
+                console.log('[Camera] Fallback camera started');
+                return;
+            } catch (fallbackErr) {
+                errorMsg = 'Fallback juga gagal: ' + fallbackErr.message;
+            }
         } else {
             errorMsg += err.message;
         }
