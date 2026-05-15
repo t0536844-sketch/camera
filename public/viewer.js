@@ -30,6 +30,8 @@ function initFromUrl() {
     const room = params.get('room');
     if (room) {
         roomCodeInput.value = room.toUpperCase();
+        // Auto-join after short delay (socket needs to connect first)
+        setTimeout(() => { joinRoom(); }, 1000);
     }
 }
 
@@ -57,46 +59,52 @@ function connectSocket() {
             deviceInfo.classList.remove('hidden');
         }
 
-        streamText.textContent = 'Menunggu stream...';
+        streamText.textContent = '⏳ Menunggu stream dari broadcaster...';
+
+        // Setup peer connection - viewer waits for broadcaster's offer
+        setupPeerConnection();
     });
 
-    socket.on('join-error', ({ message }) => {
-        alert(message);
-    });
+    socket.on('join-error', ({ message }) => { alert(message); });
 
-    // WebRTC signaling
+    // === WebRTC: Receive offer from broadcaster ===
     socket.on('webrtc-offer', async ({ fromId, offer }) => {
-        console.log('[WebRTC] Received offer');
+        console.log('[WebRTC] Received offer from broadcaster');
         if (!peerConnection) setupPeerConnection();
-        await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-        const answer = await peerConnection.createAnswer();
-        await peerConnection.setLocalDescription(answer);
-        socket.emit('webrtc-answer', { targetId: fromId, answer });
-    });
 
-    socket.on('webrtc-answer', async ({ fromId, answer }) => {
-        console.log('[WebRTC] Received answer');
-        if (peerConnection) {
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+        try {
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+            const answer = await peerConnection.createAnswer();
+            await peerConnection.setLocalDescription(answer);
+
+            // Send answer back to broadcaster
+            socket.emit('webrtc-answer', { targetId: fromId, answer });
+            console.log('[WebRTC] Answer sent to broadcaster');
+        } catch (err) {
+            console.error('[WebRTC] Failed to handle offer:', err);
         }
     });
 
     socket.on('webrtc-ice-candidate', async ({ fromId, candidate }) => {
-        console.log('[WebRTC] ICE candidate');
-        if (peerConnection) {
-            await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+        console.log('[WebRTC] ICE candidate received');
+        if (peerConnection && candidate) {
+            try {
+                await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+            } catch (err) {
+                console.warn('[WebRTC] ICE candidate add failed:', err);
+            }
         }
     });
 
-    // Stream status
+    // Stream status updates
     socket.on('stream-status', ({ isRecording }) => {
         const dot = document.querySelector('.live-dot');
         if (isRecording) {
             streamText.textContent = '🔴 Broadcaster sedang merekam';
-            dot.style.background = '#ff6b6b';
+            if (dot) dot.style.background = '#ff6b6b';
         } else {
-            streamText.textContent = 'Live';
-            dot.style.background = '#00cec9';
+            streamText.textContent = '🟢 Live';
+            if (dot) dot.style.background = '#00cec9';
         }
     });
 
@@ -105,10 +113,7 @@ function connectSocket() {
         streamVideo.srcObject = null;
         joinSetup.classList.remove('hidden');
         streamSection.classList.add('hidden');
-        if (peerConnection) {
-            peerConnection.close();
-            peerConnection = null;
-        }
+        if (peerConnection) { peerConnection.close(); peerConnection = null; }
     });
 
     // Screenshots from broadcaster
@@ -118,54 +123,50 @@ function connectSocket() {
         img.src = imageData;
         img.onclick = () => openImageModal(imageData);
         screenshots.prepend(img);
-
-        // Keep max 20 screenshots
-        while (screenshots.children.length > 20) {
-            screenshots.removeChild(screenshots.lastChild);
-        }
+        while (screenshots.children.length > 20) screenshots.removeChild(screenshots.lastChild);
     });
 }
 
-// === WebRTC Peer Connection ===
+// === WebRTC Peer Connection (Viewer = recvonly) ===
 function setupPeerConnection() {
     peerConnection = new RTCPeerConnection(rtcConfig);
 
+    // Show stream when tracks arrive
     peerConnection.ontrack = (event) => {
-        console.log('[WebRTC] Received stream');
-        streamVideo.srcObject = event.streams[0];
-        streamText.textContent = '🟢 Live';
+        console.log('[WebRTC] Received stream track, kind:', event.track.kind);
+        if (event.streams && event.streams[0]) {
+            streamVideo.srcObject = event.streams[0];
+            streamVideo.onloadedmetadata = () => {
+                streamVideo.play();
+                streamText.textContent = '🟢 Live';
+            };
+        }
     };
 
+    // Send ICE candidates to broadcaster
     peerConnection.onicecandidate = (event) => {
-        if (event.candidate) {
+        if (event.candidate && window.broadcasterId) {
             socket.emit('webrtc-ice-candidate', {
                 targetId: window.broadcasterId,
                 candidate: event.candidate
             });
         }
     };
-}
 
-async function startViewerStream() {
-    if (!peerConnection) setupPeerConnection();
-
-    // Add receiver transceiver
-    peerConnection.addTransceiver('video', { direction: 'recvonly' });
-    peerConnection.addTransceiver('audio', { direction: 'recvonly' });
-
-    const offer = await peerConnection.createOffer();
-    await peerConnection.setLocalDescription(offer);
-
-    socket.emit('webrtc-offer', { targetId: window.broadcasterId, offer });
+    peerConnection.onconnectionstatechange = () => {
+        console.log('[WebRTC] Connection state:', peerConnection.connectionState);
+        if (peerConnection.connectionState === 'connected') {
+            streamText.textContent = '🟢 Live';
+        } else if (peerConnection.connectionState === 'disconnected' || peerConnection.connectionState === 'failed') {
+            streamText.textContent = '❌ Koneksi terputus';
+        }
+    };
 }
 
 // === Join Room ===
 function joinRoom() {
     const roomCode = roomCodeInput.value.trim().toUpperCase();
-    if (!roomCode) {
-        alert('Masukkan kode room');
-        return;
-    }
+    if (!roomCode) { alert('Masukkan kode room'); return; }
 
     socket.emit('join-room', { roomCode });
 }
@@ -189,12 +190,8 @@ document.getElementById('modalClose').addEventListener('click', () => {
 
 // === Event Listeners ===
 document.getElementById('joinRoom').addEventListener('click', joinRoom);
-document.getElementById('remoteCapture').addEventListener('click', () => {
-    sendRemoteCommand('capture');
-});
-document.getElementById('remoteRecord').addEventListener('click', () => {
-    sendRemoteCommand('record');
-});
+document.getElementById('remoteCapture').addEventListener('click', () => sendRemoteCommand('capture'));
+document.getElementById('remoteRecord').addEventListener('click', () => sendRemoteCommand('record'));
 
 // === Init ===
 function init() {

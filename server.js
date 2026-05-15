@@ -69,17 +69,17 @@ io.on('connection', (socket) => {
         console.log(`[Room] Viewer ${socket.id} joined room: ${roomCode}`);
     });
 
-    // WebRTC signaling: offer
+    // WebRTC signaling: offer (broadcaster → viewer)
     socket.on('webrtc-offer', ({ targetId, offer }) => {
-        socket.to(targetId).emit('webrtc-offer', {
+        io.to(targetId).emit('webrtc-offer', {
             fromId: socket.id,
             offer
         });
     });
 
-    // WebRTC signaling: answer
+    // WebRTC signaling: answer (viewer → broadcaster)
     socket.on('webrtc-answer', ({ targetId, answer }) => {
-        socket.to(targetId).emit('webrtc-answer', {
+        io.to(targetId).emit('webrtc-answer', {
             fromId: socket.id,
             answer
         });
@@ -87,7 +87,7 @@ io.on('connection', (socket) => {
 
     // WebRTC signaling: ICE candidate
     socket.on('webrtc-ice-candidate', ({ targetId, candidate }) => {
-        socket.to(targetId).emit('webrtc-ice-candidate', {
+        io.to(targetId).emit('webrtc-ice-candidate', {
             fromId: socket.id,
             candidate
         });
@@ -112,6 +112,15 @@ io.on('connection', (socket) => {
     // Broadcaster status updates
     socket.on('broadcaster-status', ({ roomCode, isRecording }) => {
         socket.to(roomCode).emit('stream-status', { isRecording });
+    });
+
+    // Broadcaster stops
+    socket.on('stop-broadcast', ({ roomCode }) => {
+        io.to(roomCode).emit('broadcaster-disconnected');
+        if (rooms[roomCode]) {
+            delete rooms[roomCode];
+            console.log(`[Room] Room ${roomCode} stopped by broadcaster`);
+        }
     });
 
     // Disconnect
