@@ -175,17 +175,19 @@ function connectSocket() {
     });
 
     // Receive WebRTC answer from admin
-    socket.on('webrtc-answer', ({ roomCode, answer }) => {
-        // Find which admin this answer is for (match by room)
-        const pc = Object.values(peerConnections).find(p => p && p.signalingState !== 'closed');
+    socket.on('webrtc-answer', ({ roomCode, answer, adminId }) => {
+        const pc = peerConnections[adminId];
         if (pc && pc.signalingState !== 'closed') {
             pc.setRemoteDescription(new RTCSessionDescription(answer));
+            console.log('[WebRTC] Answer applied for admin:', adminId);
+        } else {
+            console.warn('[WebRTC] No peer connection for admin:', adminId);
         }
     });
 
     // Receive ICE candidate from admin
-    socket.on('webrtc-ice-candidate', ({ roomCode, candidate }) => {
-        const pc = Object.values(peerConnections).find(p => p && p.signalingState !== 'closed');
+    socket.on('webrtc-ice-candidate', ({ roomCode, candidate, adminId }) => {
+        const pc = peerConnections[adminId];
         if (pc && candidate) {
             pc.addIceCandidate(new RTCIceCandidate(candidate));
         }

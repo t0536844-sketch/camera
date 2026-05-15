@@ -150,7 +150,7 @@ io.on('connection', (socket) => {
     socket.on('admin-answer', ({ roomCode, answer }) => {
         const room = rooms[roomCode];
         if (room && room.broadcasterId) {
-            io.to(room.broadcasterId).emit('webrtc-answer', { roomCode, answer });
+            io.to(room.broadcasterId).emit('webrtc-answer', { roomCode, answer, adminId: socket.id });
         }
     });
 
@@ -158,7 +158,7 @@ io.on('connection', (socket) => {
     socket.on('admin-ice', ({ roomCode, candidate }) => {
         const room = rooms[roomCode];
         if (room && room.broadcasterId) {
-            io.to(room.broadcasterId).emit('webrtc-ice-candidate', { roomCode, candidate });
+            io.to(room.broadcasterId).emit('webrtc-ice-candidate', { roomCode, candidate, adminId: socket.id });
         }
     });
 
