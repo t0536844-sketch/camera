@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>🎬 Camera Stream</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📸</text></svg>">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-content">
+            <h1>📸 Camera Stream</h1>
+            <div class="connection-status" id="connectionStatus">
+                <span class="status-dot"></span>
+                <span class="status-text">Connecting...</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="container">
+        <!-- Room Setup -->
+        <section id="roomSetup" class="card">
+            <h2>🚀 Mulai Streaming</h2>
+            <div class="form-group">
+                <label for="roomCode">Kode Room</label>
+                <div class="input-group">
+                    <input type="text" id="roomCode" placeholder="Otomatis generate..." maxlength="6">
+                    <button class="btn btn-secondary" id="generateCode">🎲 Generate</button>
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="deviceName">Nama Device</label>
+                <input type="text" id="deviceName" placeholder="Contoh: Kamera Ruang Tamu" maxlength="30">
+            </div>
+            <button class="btn btn-primary btn-full" id="startBroadcast">🔴 Mulai Broadcast</button>
+        </section>
+
+        <!-- Camera View -->
+        <section id="cameraSection" class="card hidden">
+            <div class="video-wrapper">
+                <video id="videoPreview" autoplay playsinline muted></video>
+                <div id="recordingIndicator" class="recording-indicator hidden">
+                    <span class="rec-dot"></span>
+                    <span id="recordingTimer">00:00</span>
+                </div>
+                <div class="viewer-count" id="viewerCount">👁️ 0 viewer</div>
+            </div>
+
+            <div class="controls">
+                <button class="ctrl-btn" id="captureBtn" title="Ambil Foto">📷</button>
+                <button class="ctrl-btn" id="recordBtn" title="Rekam Video">⏺️</button>
+                <button class="ctrl-btn" id="switchBtn" title="Ganti Kamera">🔄</button>
+                <button class="ctrl-btn" id="flashBtn" title="Flash">🔦</button>
+                <button class="ctrl-btn btn-danger" id="stopBroadcastBtn" title="Stop Broadcast">⏹️</button>
+            </div>
+        </section>
+
+        <!-- Share Link -->
+        <section id="shareSection" class="card hidden">
+            <h2>📤 Bagikan Link untuk Viewer</h2>
+            <div class="share-link">
+                <input type="text" id="shareLink" readonly>
+                <button class="btn btn-secondary" id="copyLink">📋 Copy</button>
+            </div>
+            <div id="qrCodeContainer" class="qr-container">
+                <canvas id="qrCode"></canvas>
+            </div>
+        </section>
+
+        <!-- Gallery -->
+        <section id="gallerySection" class="card">
+            <div class="gallery-header">
+                <h2>🖼️ Gallery</h2>
+                <div class="gallery-actions">
+                    <button class="btn btn-small" id="clearGallery">🗑️ Hapus Semua</button>
+                </div>
+            </div>
+            <div id="gallery" class="gallery-grid">
+                <div class="gallery-empty">
+                    <p>Belum ada foto/video</p>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Media Preview Modal -->
+    <div id="mediaModal" class="modal hidden">
+        <div class="modal-content">
+            <span class="modal-close" id="modalClose">&times;</span>
+            <div id="modalMedia"></div>
+        </div>
+    </div>
+
+    <canvas id="photoCanvas" style="display:none;"></canvas>
+    <video id="recordedVideo" controls style="display:none;"></video>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
