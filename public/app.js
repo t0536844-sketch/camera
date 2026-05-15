@@ -32,6 +32,7 @@ let adminCount = 0;
 
 // WebRTC: peer connection per admin watching this client
 const peerConnections = {}; // adminSocketId -> RTCPeerConnection
+const waitingAdmins = [];   // admin IDs waiting for stream to start
 const rtcConfig = {
     iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
@@ -159,8 +160,13 @@ function connectSocket() {
         console.log('[Client] Admin watching:', adminId);
         adminCount++;
         updateAdminCount();
-        // Create peer connection for this admin
-        createPeerConnectionForAdmin(adminId);
+
+        if (stream) {
+            createPeerConnectionForAdmin(adminId);
+        } else {
+            waitingAdmins.push(adminId);
+            console.log('[Client] Admin added to waiting list:', adminId);
+        }
     });
 
     // Admin left
@@ -292,6 +298,10 @@ async function startCamera() {
         socket.emit('client-ready', { roomCode: currentRoomCode });
 
         // If admins are already waiting, create peer connections
+        waitingAdmins.forEach(adminId => {
+            createPeerConnectionForAdmin(adminId);
+        });
+        waitingAdmins.length = 0; // Clear waiting list
         Object.keys(peerConnections).forEach(adminId => {
             createPeerConnectionForAdmin(adminId);
         });
