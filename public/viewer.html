@@ -20,37 +20,34 @@
     </header>
 
     <main class="container">
-        <!-- Client List -->
-        <section id="clientListSection" class="card">
-            <h2>📡 Device Terhubung</h2>
-            <div id="clientList" class="client-list">
-                <div class="client-empty">
-                    <p>Belum ada device terhubung</p>
-                    <p class="hint">Device buka <code>/app.html</code> untuk mulai</p>
+        <!-- Join Room -->
+        <section id="joinRoomSection" class="card">
+            <h2>🔗 Join Room</h2>
+            <div class="form-group">
+                <label for="roomCode">Kode Room</label>
+                <input type="text" id="roomCode" placeholder="Masukkan kode room..." maxlength="6" style="text-transform: uppercase;">
+            </div>
+            <button class="btn btn-primary btn-full" id="joinRoomBtn">📹 Join Room</button>
+        </section>
+
+        <!-- Room List (all available rooms) -->
+        <section id="roomListSection" class="card">
+            <h2>📡 Room Tersedia</h2>
+            <div id="roomList" class="room-list">
+                <div class="room-empty">
+                    <p>Belum ada room aktif</p>
                 </div>
             </div>
         </section>
 
-        <!-- Stream View (when monitoring) -->
-        <section id="streamSection" class="card hidden">
-            <div class="stream-header">
-                <h2 id="streamTitle">📹 Stream</h2>
-                <button class="btn btn-danger btn-small" id="stopMonitor">⏹️ Stop Monitor</button>
+        <!-- Multi-Stream Grid -->
+        <section id="streamsSection" class="card hidden">
+            <div class="streams-header">
+                <h2>📹 Live Streams</h2>
+                <span id="streamCount" class="stream-count-badge">0 streams</span>
             </div>
-            <div class="video-wrapper">
-                <video id="streamVideo" autoplay playsinline></video>
-                <div id="streamStatus" class="stream-status">
-                    <span class="live-dot"></span>
-                    <span id="streamText">Menunggu stream...</span>
-                </div>
-            </div>
-
-            <!-- Remote Controls -->
-            <div class="controls">
-                <button class="ctrl-btn" id="remoteCapture" title="Request Foto">📷</button>
-                <button class="ctrl-btn" id="remoteRecord" title="Request Rekam">⏺️</button>
-                <button class="ctrl-btn" id="remoteSwitch" title="Ganti Kamera">🔄</button>
-                <button class="ctrl-btn" id="remoteFlash" title="Flash">🔦</button>
+            <div id="streamsGrid" class="streams-grid">
+                <!-- Dynamic stream cards go here -->
             </div>
         </section>
 

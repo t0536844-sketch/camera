@@ -17,132 +17,148 @@ app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'home.html'));
 });
 
-// Track connected clients (camera devices)
-const clients = {}; // clientId -> { name, socketId, status, connectedAt }
-
-// Track active WebRTC sessions
-const sessions = {}; // sessionId -> { clientId, adminId, status }
+// Rooms: roomCode → { broadcasterId, viewers: [adminSocketId], deviceInfo, isStreaming }
+const rooms = {};
 
 io.on('connection', (socket) => {
     console.log(`[Socket] Connected: ${socket.id}`);
 
-    // === CLIENT SIDE (Camera Device) ===
+    // === CLIENT (Camera Device) ===
 
-    // Client registers itself
-    socket.on('client-register', ({ clientId, clientName }) => {
-        clients[clientId] = {
-            name: clientName,
-            socketId: socket.id,
-            status: 'online',
-            connectedAt: new Date().toISOString()
+    // Client joins/creates a room
+    socket.on('client-join-room', ({ roomCode, deviceName }) => {
+        roomCode = roomCode.toUpperCase();
+
+        // Check if room already has broadcaster
+        if (rooms[roomCode] && rooms[roomCode].broadcasterId) {
+            socket.emit('client-error', { message: `Room ${roomCode} sudah ada broadcaster` });
+            return;
+        }
+
+        rooms[roomCode] = {
+            broadcasterId: socket.id,
+            viewers: [],
+            deviceInfo: { name: deviceName || 'Camera', platform: 'browser' },
+            isStreaming: false
         };
-        socket.clientId = clientId;
-        console.log(`[Client] Registered: ${clientId} (${clientName})`);
 
-        // Notify all admins about new client
-        io.emit('client-list-updated', getClientsList());
+        socket.roomCode = roomCode;
+        console.log(`[Room] Client ${socket.id} created room: ${roomCode} (${deviceName})`);
+
+        // Broadcast room list to admins
+        broadcastRoomList();
+
+        socket.emit('client-room-joined', { roomCode });
     });
 
-    // Client starts camera (ready to stream)
-    socket.on('client-ready', ({ clientId }) => {
-        if (clients[clientId]) {
-            clients[clientId].status = 'streaming';
-            io.emit('client-list-updated', getClientsList());
+    // Client ready to stream (camera started)
+    socket.on('client-ready', ({ roomCode }) => {
+        if (rooms[roomCode]) {
+            rooms[roomCode].isStreaming = true;
+            broadcastRoomList();
+
+            // Notify all admins in room that stream is ready
+            rooms[roomCode].viewers.forEach(adminId => {
+                io.to(adminId).emit('room-stream-ready', { roomCode });
+            });
         }
     });
 
-    // Client sends WebRTC offer to admin
-    socket.on('client-offer', ({ clientId, offer }) => {
-        // Find admin session for this client
-        const session = Object.values(sessions).find(s => s.clientId === clientId && s.adminId);
-        if (session) {
-            io.to(session.adminId).emit('webrtc-offer', { clientId, offer });
-        }
-    });
-
-    // Client receives WebRTC answer from admin
-    socket.on('client-answer-relay', ({ targetClientId, answer }) => {
-        const client = Object.values(clients).find(c => c.socketId === socket.id);
-        // This is admin sending answer back, find the client socket
-        const targetClient = Object.values(clients).find(c => c.socketId === targetClientId);
-        if (targetClient) {
-            io.to(targetClient.socketId).emit('webrtc-answer', { answer });
-        }
-    });
-
-    // Client receives ICE candidate
-    socket.on('client-ice-relay', ({ targetClientId, candidate }) => {
-        const targetClient = Object.values(clients).find(c => c.socketId === targetClientId);
-        if (targetClient) {
-            io.to(targetClient.socketId).emit('webrtc-ice-candidate', { candidate });
-        }
+    // Client sends WebRTC offer to specific admin
+    socket.on('client-offer', ({ roomCode, adminId, offer }) => {
+        io.to(adminId).emit('webrtc-offer', { roomCode, fromClientId: socket.id, offer });
     });
 
     // Client sends ICE candidate to admin
-    socket.on('client-ice', ({ clientId, candidate }) => {
-        const session = Object.values(sessions).find(s => s.clientId === clientId && s.adminId);
-        if (session) {
-            io.to(session.adminId).emit('webrtc-ice-candidate', { clientId, candidate });
-        }
+    socket.on('client-ice', ({ roomCode, adminId, candidate }) => {
+        io.to(adminId).emit('webrtc-ice-candidate', { roomCode, candidate });
     });
 
-    // Client screenshot
-    socket.on('client-screenshot', ({ clientId, imageData }) => {
-        io.emit('client-screenshot', { clientId, imageData, timestamp: Date.now() });
+    // Client sends screenshot
+    socket.on('client-screenshot', ({ roomCode, imageData }) => {
+        if (rooms[roomCode]) {
+            rooms[roomCode].viewers.forEach(adminId => {
+                io.to(adminId).emit('new-screenshot', { roomCode, imageData });
+            });
+        }
     });
 
     // Client status update
-    socket.on('client-status', ({ clientId, isRecording }) => {
-        io.emit('client-status-update', { clientId, isRecording });
-    });
-
-    // === ADMIN SIDE (Monitoring Dashboard) ===
-
-    // Admin wants to monitor a client
-    socket.on('admin-monitor', ({ clientId }) => {
-        socket.adminId = socket.id;
-        sessions[clientId] = { clientId, adminId: socket.id, status: 'active', startedAt: Date.now() };
-        console.log(`[Admin] Monitoring ${clientId} from ${socket.id}`);
-
-        // Notify client to start streaming
-        const client = clients[clientId];
-        if (client) {
-            io.to(client.socketId).emit('admin-request-stream', { adminId: socket.id });
+    socket.on('client-status', ({ roomCode, isRecording }) => {
+        if (rooms[roomCode]) {
+            rooms[roomCode].viewers.forEach(adminId => {
+                io.to(adminId).emit('stream-status', { roomCode, isRecording });
+            });
         }
     });
 
-    // Admin stops monitoring
-    socket.on('admin-stop-monitor', ({ clientId }) => {
-        if (sessions[clientId]) {
-            delete sessions[clientId];
-            const client = clients[clientId];
-            if (client) {
-                io.to(client.socketId).emit('admin-stop-stream', { clientId });
-            }
+    // === ADMIN (Monitoring Dashboard) ===
+
+    // Admin joins room to monitor
+    socket.on('admin-join-room', ({ roomCode }) => {
+        roomCode = roomCode.toUpperCase();
+        const room = rooms[roomCode];
+
+        if (!room || !room.broadcasterId) {
+            socket.emit('admin-error', { message: `Room ${roomCode} tidak ditemukan` });
+            return;
         }
+
+        if (room.viewers.includes(socket.id)) {
+            socket.emit('admin-error', { message: 'Sudah ada di room ini' });
+            return;
+        }
+
+        room.viewers.push(socket.id);
+        socket.adminRoom = roomCode;
+
+        console.log(`[Admin] ${socket.id} joined room ${roomCode}`);
+
+        // Notify client that admin is watching
+        io.to(room.broadcasterId).emit('admin-watching', { adminId: socket.id, roomCode });
+
+        // Tell admin about current room state
+        socket.emit('room-joined', {
+            roomCode,
+            deviceInfo: room.deviceInfo,
+            isStreaming: room.isStreaming
+        });
+
+        broadcastRoomList();
+    });
+
+    // Admin stops monitoring room
+    socket.on('admin-leave-room', ({ roomCode }) => {
+        const room = rooms[roomCode];
+        if (room) {
+            room.viewers = room.viewers.filter(id => id !== socket.id);
+            io.to(room.broadcasterId).emit('admin-left', { adminId: socket.id, roomCode });
+            broadcastRoomList();
+        }
+        socket.adminRoom = null;
     });
 
     // Admin sends remote command to client
-    socket.on('admin-command', ({ clientId, command }) => {
-        const client = clients[clientId];
-        if (client) {
-            io.to(client.socketId).emit('remote-command', { command });
+    socket.on('admin-command', ({ roomCode, command }) => {
+        const room = rooms[roomCode];
+        if (room && room.broadcasterId) {
+            io.to(room.broadcasterId).emit('remote-command', { command });
         }
     });
 
     // Admin sends WebRTC answer to client
-    socket.on('admin-answer', ({ clientId, answer }) => {
-        const client = clients[clientId];
-        if (client) {
-            io.to(client.socketId).emit('webrtc-answer', { answer });
+    socket.on('admin-answer', ({ roomCode, answer }) => {
+        const room = rooms[roomCode];
+        if (room && room.broadcasterId) {
+            io.to(room.broadcasterId).emit('webrtc-answer', { roomCode, answer });
         }
     });
 
     // Admin sends ICE candidate to client
-    socket.on('admin-ice', ({ clientId, candidate }) => {
-        const client = clients[clientId];
-        if (client) {
-            io.to(client.socketId).emit('webrtc-ice-candidate', { candidate });
+    socket.on('admin-ice', ({ roomCode, candidate }) => {
+        const room = rooms[roomCode];
+        if (room && room.broadcasterId) {
+            io.to(room.broadcasterId).emit('webrtc-ice-candidate', { roomCode, candidate });
         }
     });
 
@@ -151,25 +167,36 @@ io.on('connection', (socket) => {
         console.log(`[Socket] Disconnected: ${socket.id}`);
 
         // Handle client disconnect
-        if (socket.clientId && clients[socket.clientId]) {
-            delete clients[socket.clientId];
-            io.emit('client-list-updated', getClientsList());
+        if (socket.roomCode && rooms[socket.roomCode]) {
+            const room = rooms[socket.roomCode];
+            // Notify all admins in room
+            room.viewers.forEach(adminId => {
+                io.to(adminId).emit('broadcaster-disconnected', { roomCode: socket.roomCode });
+            });
+            delete rooms[socket.roomCode];
+            broadcastRoomList();
         }
 
-        // Clean up admin sessions
-        Object.keys(sessions).forEach(key => {
-            if (sessions[key].adminId === socket.id) {
-                delete sessions[key];
+        // Handle admin disconnect
+        if (socket.adminRoom && rooms[socket.adminRoom]) {
+            const room = rooms[socket.adminRoom];
+            room.viewers = room.viewers.filter(id => id !== socket.id);
+            if (room.broadcasterId) {
+                io.to(room.broadcasterId).emit('admin-left', { adminId: socket.id, roomCode: socket.adminRoom });
             }
-        });
+            broadcastRoomList();
+        }
     });
 });
 
-function getClientsList() {
-    return Object.entries(clients).map(([id, data]) => ({
-        id,
-        ...data
+function broadcastRoomList() {
+    const roomList = Object.entries(rooms).map(([code, room]) => ({
+        roomCode: code,
+        deviceName: room.deviceInfo.name,
+        viewerCount: room.viewers.length,
+        isStreaming: room.isStreaming
     }));
+    io.emit('room-list-updated', roomList);
 }
 
 const PORT = process.env.PORT || 3000;

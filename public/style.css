@@ -279,6 +279,23 @@ input[type="text"]:focus {
     font-size: 0.85rem;
 }
 
+/* === Room Code Badge === */
+.room-code-badge {
+    position: absolute;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(108, 92, 231, 0.8);
+    backdrop-filter: blur(8px);
+    padding: 6px 16px;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: white;
+    letter-spacing: 2px;
+    font-family: monospace;
+}
+
 /* === Share Link === */
 .share-link {
     display: flex;
@@ -422,6 +439,89 @@ input[type="text"]:focus {
     gap: 10px;
 }
 
+/* === Room List (Admin Dashboard) === */
+.room-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.room-card {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 16px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border-glass);
+    border-radius: 12px;
+    transition: var(--transition);
+}
+
+.room-card.monitoring {
+    border-color: var(--accent-primary);
+    background: rgba(108, 92, 231, 0.1);
+}
+
+.room-card:hover {
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.room-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.room-code {
+    font-weight: 700;
+    font-size: 1.1rem;
+    letter-spacing: 2px;
+    font-family: monospace;
+}
+
+.room-meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.room-device {
+    font-size: 0.85rem;
+}
+
+.room-viewers {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.room-live, .room-waiting {
+    font-size: 0.75rem;
+    padding: 2px 8px;
+    border-radius: 10px;
+}
+
+.room-live {
+    background: rgba(255, 107, 107, 0.2);
+    color: #ff6b6b;
+}
+
+.room-waiting {
+    background: rgba(253, 203, 110, 0.2);
+    color: #fdcb6e;
+}
+
+.room-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.room-empty {
+    text-align: center;
+    padding: 30px 0;
+    color: var(--text-secondary);
+}
+
 .client-card {
     display: flex;
     justify-content: space-between;
@@ -514,6 +614,111 @@ input[type="text"]:focus {
 
 .stream-header h2 {
     margin-bottom: 0;
+}
+
+/* === Multi-Stream Grid === */
+.streams-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+.streams-header h2 {
+    margin-bottom: 0;
+}
+
+.stream-count-badge {
+    background: rgba(108, 92, 231, 0.2);
+    color: var(--accent-secondary);
+    padding: 4px 12px;
+    border-radius: 10px;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.streams-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 16px;
+}
+
+.stream-card {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border-glass);
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+.stream-card-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    background: rgba(0, 0, 0, 0.3);
+    border-bottom: 1px solid var(--border-glass);
+}
+
+.stream-room-code {
+    font-weight: 700;
+    font-size: 0.9rem;
+    letter-spacing: 2px;
+    font-family: monospace;
+    color: var(--accent-secondary);
+}
+
+.stream-device {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    flex: 1;
+}
+
+.stream-leave-btn {
+    padding: 4px 8px !important;
+    font-size: 0.7rem !important;
+}
+
+.stream-video-wrapper {
+    position: relative;
+    aspect-ratio: 4/3;
+    background: #000;
+}
+
+.stream-video-wrapper video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.stream-status-overlay {
+    position: absolute;
+    bottom: 12px;
+    left: 12px;
+    background: rgba(0, 0, 0, 0.7);
+    padding: 4px 12px;
+    border-radius: 10px;
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+.live-badge { color: #00cec9; }
+.recording-badge { color: #ff6b6b; }
+.waiting-text { color: var(--text-secondary); }
+
+.stream-controls {
+    position: absolute;
+    bottom: 12px;
+    right: 12px;
+    display: flex;
+    gap: 6px;
+}
+
+.stream-controls .ctrl-btn {
+    width: 36px;
+    height: 36px;
+    font-size: 1rem;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
 }
 
 /* === Utilities === */

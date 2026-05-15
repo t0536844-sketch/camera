@@ -3,22 +3,19 @@
 // === DOM Elements ===
 const videoPreview = document.getElementById('videoPreview');
 const photoCanvas = document.getElementById('photoCanvas');
-const recordedVideo = document.getElementById('recordedVideo');
 const recordingIndicator = document.getElementById('recordingIndicator');
 const recordingTimerEl = document.getElementById('recordingTimer');
-
 const roomSetup = document.getElementById('roomSetup');
 const cameraSection = document.getElementById('cameraSection');
 const shareSection = document.getElementById('shareSection');
 const gallerySection = document.getElementById('gallerySection');
 const gallery = document.getElementById('gallery');
-
 const roomCodeInput = document.getElementById('roomCode');
 const deviceNameInput = document.getElementById('deviceName');
 const shareLinkInput = document.getElementById('shareLink');
-
 const connectionStatus = document.getElementById('connectionStatus');
-const viewerCountEl = document.getElementById('viewerCount');
+const roomCodeDisplay = document.getElementById('roomCodeDisplay');
+const adminCountEl = document.getElementById('adminCount');
 
 // === State ===
 let socket = null;
@@ -30,10 +27,11 @@ let recordingSeconds = 0;
 let currentFacingMode = 'user';
 let flashActive = false;
 let videoTrack = null;
+let currentRoomCode = null;
+let adminCount = 0;
 
-// WebRTC state for client
-let peerConnection = null;
-let adminSocketId = null;
+// WebRTC: peer connection per admin watching this client
+const peerConnections = {}; // adminSocketId -> RTCPeerConnection
 const rtcConfig = {
     iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
@@ -51,9 +49,6 @@ const rtcConfig = {
         }
     ]
 };
-
-// Unique client ID
-const CLIENT_ID = 'client-' + Math.random().toString(36).substring(2, 8);
 
 // === IndexedDB Gallery ===
 const DB_NAME = 'CameraStreamGallery';
@@ -152,9 +147,6 @@ function connectSocket() {
     socket.on('connect', () => {
         connectionStatus.classList.add('connected');
         connectionStatus.querySelector('.status-text').textContent = 'Connected';
-        // Register as client device
-        const deviceName = deviceNameInput.value.trim() || 'Camera Device';
-        socket.emit('client-register', { clientId: CLIENT_ID, clientName: deviceName });
     });
 
     socket.on('disconnect', () => {
@@ -162,33 +154,40 @@ function connectSocket() {
         connectionStatus.querySelector('.status-text').textContent = 'Disconnected';
     });
 
-    // Admin wants to monitor this client
-    socket.on('admin-request-stream', ({ adminId }) => {
-        console.log('[Client] Admin requesting stream:', adminId);
-        adminSocketId = adminId;
-        startWebRTCWithAdmin();
+    // Admin watching this client
+    socket.on('admin-watching', ({ adminId }) => {
+        console.log('[Client] Admin watching:', adminId);
+        adminCount++;
+        updateAdminCount();
+        // Create peer connection for this admin
+        createPeerConnectionForAdmin(adminId);
     });
 
-    socket.on('admin-stop-stream', () => {
-        console.log('[Client] Admin stopped monitoring');
-        adminSocketId = null;
-        if (peerConnection) {
-            peerConnection.close();
-            peerConnection = null;
+    // Admin left
+    socket.on('admin-left', ({ adminId }) => {
+        console.log('[Client] Admin left:', adminId);
+        adminCount = Math.max(0, adminCount - 1);
+        updateAdminCount();
+        if (peerConnections[adminId]) {
+            peerConnections[adminId].close();
+            delete peerConnections[adminId];
         }
     });
 
     // Receive WebRTC answer from admin
-    socket.on('webrtc-answer', ({ answer }) => {
-        if (peerConnection) {
-            peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+    socket.on('webrtc-answer', ({ roomCode, answer }) => {
+        // Find which admin this answer is for (match by room)
+        const pc = Object.values(peerConnections).find(p => p && p.signalingState !== 'closed');
+        if (pc && pc.signalingState !== 'closed') {
+            pc.setRemoteDescription(new RTCSessionDescription(answer));
         }
     });
 
     // Receive ICE candidate from admin
-    socket.on('webrtc-ice-candidate', ({ candidate }) => {
-        if (peerConnection && candidate) {
-            peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+    socket.on('webrtc-ice-candidate', ({ roomCode, candidate }) => {
+        const pc = Object.values(peerConnections).find(p => p && p.signalingState !== 'closed');
+        if (pc && candidate) {
+            pc.addIceCandidate(new RTCIceCandidate(candidate));
         }
     });
 
@@ -207,22 +206,23 @@ function connectSocket() {
         else if (command === 'startCamera') startCamera();
         else if (command === 'stopCamera') {
             stopCamera();
-            adminSocketId = null;
         }
     });
+
+    socket.on('client-error', ({ message }) => { alert(message); });
 }
 
-// === WebRTC: Create connection with admin ===
-async function startWebRTCWithAdmin() {
+// === WebRTC: Create connection per admin ===
+async function createPeerConnectionForAdmin(adminId) {
     if (!stream) {
-        console.log('[Client] No stream yet, waiting...');
+        console.log('[Client] No stream yet, will create PC when ready');
         return;
     }
 
-    console.log('[WebRTC] Creating peer connection for admin');
+    console.log('[WebRTC] Creating peer connection for admin:', adminId);
 
     const pc = new RTCPeerConnection(rtcConfig);
-    peerConnection = pc;
+    peerConnections[adminId] = pc;
 
     // Add camera stream tracks
     stream.getTracks().forEach(track => {
@@ -231,15 +231,15 @@ async function startWebRTCWithAdmin() {
 
     // Send ICE candidates to admin
     pc.onicecandidate = (event) => {
-        if (event.candidate) {
-            socket.emit('client-ice', { clientId: CLIENT_ID, candidate: event.candidate });
+        if (event.candidate && currentRoomCode) {
+            socket.emit('client-ice', { roomCode: currentRoomCode, adminId, candidate: event.candidate });
         }
     };
 
     pc.onconnectionstatechange = () => {
-        console.log('[WebRTC] Connection state:', pc.connectionState);
+        console.log(`[WebRTC] Connection state for admin ${adminId}:`, pc.connectionState);
         if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
-            peerConnection = null;
+            delete peerConnections[adminId];
         }
     };
 
@@ -247,12 +247,20 @@ async function startWebRTCWithAdmin() {
     try {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
-        socket.emit('client-offer', { clientId: CLIENT_ID, offer });
-        console.log('[WebRTC] Offer sent to admin');
+        socket.emit('client-offer', { roomCode: currentRoomCode, adminId, offer });
+        console.log('[WebRTC] Offer sent to admin:', adminId);
     } catch (err) {
         console.error('[WebRTC] Failed to create offer:', err);
-        peerConnection = null;
+        delete peerConnections[adminId];
     }
+}
+
+// === Room Code ===
+function generateCode() {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let code = '';
+    for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
+    roomCodeInput.value = code;
 }
 
 // === Camera Functions ===
@@ -278,13 +286,13 @@ async function startCamera() {
 
         initMediaRecorder();
 
-        // Notify server that client is ready to stream
-        socket.emit('client-ready', { clientId: CLIENT_ID });
+        // Notify server that stream is ready
+        socket.emit('client-ready', { roomCode: currentRoomCode });
 
-        // If admin is already monitoring, start WebRTC
-        if (adminSocketId) {
-            startWebRTCWithAdmin();
-        }
+        // If admins are already waiting, create peer connections
+        Object.keys(peerConnections).forEach(adminId => {
+            createPeerConnectionForAdmin(adminId);
+        });
     } catch (err) {
         console.error('[Camera] Error:', err.name, err.message);
         let msg = 'Tidak dapat mengakses kamera.\n\n';
@@ -307,7 +315,7 @@ function startCameraLegacy(getUserMedia) {
             (s) => {
                 stream = s; videoPreview.srcObject = stream; videoPreview.play();
                 videoTrack = stream.getVideoTracks()[0]; initMediaRecorder();
-                socket.emit('client-ready', { clientId: CLIENT_ID });
+                socket.emit('client-ready', { roomCode: currentRoomCode });
                 resolve();
             }, (e) => reject(e));
     });
@@ -316,8 +324,11 @@ function startCameraLegacy(getUserMedia) {
 function stopCamera() {
     if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; videoPreview.srcObject = null; }
     stopRecording();
-    if (peerConnection) { peerConnection.close(); peerConnection = null; }
-    // Jangan reset adminSocketId agar bisa reconnect setelah switch
+    // Close all peer connections
+    Object.values(peerConnections).forEach(pc => pc.close());
+    peerConnections = {};
+    adminCount = 0;
+    updateAdminCount();
 }
 
 function initMediaRecorder() {
@@ -331,7 +342,7 @@ function initMediaRecorder() {
             clearInterval(recordingInterval);
             recordingSeconds = 0;
             recordingIndicator.classList.add('hidden');
-            socket.emit('client-status', { clientId: CLIENT_ID, isRecording: false });
+            socket.emit('client-status', { roomCode: currentRoomCode, isRecording: false });
         };
     } catch (e) { console.error('MediaRecorder error:', e); }
 }
@@ -343,7 +354,7 @@ function capturePhoto() {
     photoCanvas.getContext('2d').drawImage(videoPreview, 0, 0);
     const dataUrl = photoCanvas.toDataURL('image/png');
     saveToGallery(dataUrl, 'image');
-    socket.emit('client-screenshot', { clientId: CLIENT_ID, imageData: dataUrl });
+    socket.emit('client-screenshot', { roomCode: currentRoomCode, imageData: dataUrl });
 }
 
 function toggleRecording() {
@@ -362,7 +373,7 @@ function startRecording() {
         const s = (recordingSeconds % 60).toString().padStart(2, '0');
         recordingTimerEl.textContent = `${m}:${s}`;
     }, 1000);
-    socket.emit('client-status', { clientId: CLIENT_ID, isRecording: true });
+    socket.emit('client-status', { roomCode: currentRoomCode, isRecording: true });
 }
 
 function stopRecording() {
@@ -377,16 +388,20 @@ async function switchCamera() {
     if (!stream) return;
     currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
 
-    // Stop current tracks tapi jangan close peerConnection manual
+    // Save current admin IDs before stopping
+    const adminIds = Object.keys(peerConnections);
+
+    // Stop current tracks
     if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
     stopRecording();
 
+    // Restart camera
     await startCamera();
 
-    // Setelah kamera baru aktif, buat ulang WebRTC connection ke admin
-    if (adminSocketId) {
-        startWebRTCWithAdmin();
-    }
+    // Recreate peer connections for all admins
+    adminIds.forEach(adminId => {
+        createPeerConnectionForAdmin(adminId);
+    });
 }
 
 async function toggleFlash() {
@@ -398,6 +413,10 @@ async function toggleFlash() {
     document.getElementById('flashBtn').classList.toggle('active', flashActive);
 }
 
+function updateAdminCount() {
+    adminCountEl.textContent = `👁️ ${adminCount} admin${adminCount !== 1 ? 's' : ''}`;
+}
+
 function copyShareLink() {
     shareLinkInput.select();
     navigator.clipboard.writeText(shareLinkInput.value).then(() => {
@@ -407,31 +426,54 @@ function copyShareLink() {
     });
 }
 
-// === Event Listeners ===
-document.getElementById('startBroadcast').addEventListener('click', () => {
-    startCamera();
-    // Show share link
-    cameraSection.classList.remove('hidden');
-    shareSection.classList.remove('hidden');
-    const shareUrl = window.location.href;
-    shareLinkInput.value = shareUrl;
-    if (typeof QRCode !== 'undefined') {
-        QRCode.toCanvas(document.getElementById('qrCode'), shareUrl, {
-            width: 200, margin: 2,
-            color: { dark: '#0f0f1a', light: '#ffffff' }
-        }, (err) => { if (err) console.error('QR Error:', err); });
-    }
-});
+// === Start Broadcast ===
+async function startBroadcast() {
+    const roomCode = roomCodeInput.value.trim().toUpperCase();
+    const deviceName = deviceNameInput.value.trim() || 'Camera Device';
 
+    if (!roomCode) { alert('Masukkan kode room'); return; }
+
+    // Join room first
+    socket.emit('client-join-room', { roomCode, deviceName });
+
+    socket.once('client-room-joined', async ({ roomCode }) => {
+        currentRoomCode = roomCode;
+        roomCodeDisplay.textContent = `Room: ${roomCode}`;
+
+        // Start camera
+        await startCamera();
+
+        roomSetup.classList.add('hidden');
+        cameraSection.classList.remove('hidden');
+        shareSection.classList.remove('hidden');
+
+        const shareUrl = window.location.origin + `/viewer.html?room=${roomCode}`;
+        shareLinkInput.value = shareUrl;
+
+        if (typeof QRCode !== 'undefined') {
+            QRCode.toCanvas(document.getElementById('qrCode'), shareUrl, {
+                width: 200, margin: 2,
+                color: { dark: '#0f0f1a', light: '#ffffff' }
+            }, (err) => { if (err) console.error('QR Error:', err); });
+        }
+    });
+}
+
+// === Event Listeners ===
+document.getElementById('generateCode').addEventListener('click', generateCode);
+document.getElementById('startBroadcast').addEventListener('click', startBroadcast);
 document.getElementById('captureBtn').addEventListener('click', capturePhoto);
 document.getElementById('recordBtn').addEventListener('click', toggleRecording);
 document.getElementById('switchBtn').addEventListener('click', switchCamera);
 document.getElementById('flashBtn').addEventListener('click', toggleFlash);
 document.getElementById('stopBroadcastBtn').addEventListener('click', () => {
     stopCamera();
-    adminSocketId = null; // Reset di sini untuk stop broadcast manual
+    socket.emit('admin-leave-room', { roomCode: currentRoomCode });
+    currentRoomCode = null;
     cameraSection.classList.add('hidden');
     shareSection.classList.add('hidden');
+    roomSetup.classList.remove('hidden');
+    generateCode();
 });
 document.getElementById('copyLink').addEventListener('click', copyShareLink);
 document.getElementById('clearGallery').addEventListener('click', async () => {
@@ -443,12 +485,19 @@ async function init() {
     connectSocket();
     await openDB();
     await loadGallery();
+    generateCode();
 
-    // HTTPS warning
+    // Check URL params for room
+    const params = new URLSearchParams(window.location.search);
+    const roomFromUrl = params.get('room');
+    if (roomFromUrl) {
+        roomCodeInput.value = roomFromUrl.toUpperCase();
+    }
+
     if (!window.isSecureContext && window.location.protocol === 'http:') {
         const warning = document.createElement('div');
         warning.style.cssText = 'background:linear-gradient(135deg,#ff6b6b,#ee5a5a);color:white;padding:16px 20px;text-align:center;font-weight:600;position:sticky;top:0;z-index:9999;';
-        warning.innerHTML = '⚠️ <strong>Kamera butuh HTTPS!</strong><br><small>Buka via tunnel (Localtonet/Cloudflare) untuk akses dari internet.</small>';
+        warning.innerHTML = '⚠️ <strong>Kamera butuh HTTPS!</strong><br><small>Buka via tunnel (Localtonet/Cloudflare).</small>';
         document.body.prepend(warning);
     }
 }
