@@ -9,8 +9,8 @@ const io = new Server(server, {
     cors: { origin: "*", methods: ["GET", "POST"] }
 });
 
-// Serve public files
-app.use(express.static(path.join(__dirname, 'public')));
+// Serve public files (disable auto index.html for /)
+app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 
 // Root → landing page
 app.get('/', (req, res) => {
@@ -175,6 +175,7 @@ function getClientsList() {
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`🎬 Camera Monitoring Server on port ${PORT}`);
-    console.log(`   Admin: http://localhost:${PORT}/`);
-    console.log(`   Client: http://localhost:${PORT}/client.html`);
+    console.log(`   🏠 Home: http://localhost:${PORT}/`);
+    console.log(`   📷 Camera Device: http://localhost:${PORT}/index.html`);
+    console.log(`   🎬 Admin Monitor: http://localhost:${PORT}/viewer.html`);
 });
