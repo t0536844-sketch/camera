@@ -250,10 +250,28 @@ function showShareSection(roomCode) {
 // === Camera Functions ===
 async function startCamera() {
     try {
+        console.log('[Camera] Checking mediaDevices availability...');
+        
+        // Check if mediaDevices is available
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            // Try legacy API fallback
+            const getUserMedia = navigator.getUserMedia 
+                || navigator.webkitGetUserMedia 
+                || navigator.mozGetUserMedia 
+                || navigator.msGetUserMedia;
+            
+            if (getUserMedia) {
+                console.log('[Camera] Using legacy getUserMedia API');
+                return startCameraLegacy(getUserMedia);
+            }
+            
+            throw new Error('Browser tidak mendukung akses kamera. Pastikan kamu membuka halaman via HTTPS (bukan HTTP).');
+        }
+
         console.log('[Camera] Requesting camera access...');
         stream = await navigator.mediaDevices.getUserMedia({
             video: { facingMode: currentFacingMode, width: { ideal: 1280 }, height: { ideal: 720 } },
-            audio: false  // no audio = lebih reliable di mobile
+            audio: false
         });
 
         console.log('[Camera] Camera access granted, tracks:', stream.getTracks().length);
@@ -282,7 +300,13 @@ async function startCamera() {
     } catch (err) {
         console.error('[Camera] Error:', err.name, err.message);
         let errorMsg = 'Tidak dapat mengakses kamera.\n\n';
-        if (err.name === 'NotAllowedError') {
+        
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            errorMsg += '⚠️ Browser tidak mendukung getUserMedia API.\n';
+            errorMsg += '• Pastikan halaman dibuka via **HTTPS**\n';
+            errorMsg += '• Coba buka langsung di browser (bukan iframe)\n';
+            errorMsg += '• URL saat ini: ' + window.location.href;
+        } else if (err.name === 'NotAllowedError') {
             errorMsg += '❌ Akses kamera ditolak. Mohon izinkan akses kamera di browser settings.';
         } else if (err.name === 'NotFoundError') {
             errorMsg += '❌ Tidak ditemukan kamera di device ini.';
@@ -290,7 +314,6 @@ async function startCamera() {
             errorMsg += '❌ Kamera sedang digunakan oleh aplikasi lain.';
         } else if (err.name === 'OverconstrainedError') {
             errorMsg += '❌ Kamera tidak mendukung resolusi yang diminta. Mencoba fallback...';
-            // Fallback: lower resolution
             try {
                 stream = await navigator.mediaDevices.getUserMedia({
                     video: { facingMode: currentFacingMode, width: { ideal: 640 }, height: { ideal: 480 } }
@@ -309,6 +332,24 @@ async function startCamera() {
         }
         alert(errorMsg);
     }
+}
+
+function startCameraLegacy(getUserMedia) {
+    return new Promise((resolve, reject) => {
+        getUserMedia.call(navigator, {
+            video: { facingMode: currentFacingMode },
+            audio: false
+        }, (localStream) => {
+            stream = localStream;
+            videoPreview.srcObject = stream;
+            videoPreview.play();
+            videoTrack = stream.getVideoTracks()[0];
+            initMediaRecorder();
+            resolve();
+        }, (err) => {
+            reject(err);
+        });
+    });
 }
 
 function stopCamera() {
@@ -468,6 +509,43 @@ async function init() {
     await openDB();
     await loadGallery();
     generateCode();
+
+    // Check secure context requirement
+    if (!window.isSecureContext && window.location.protocol === 'http:') {
+        console.warn('[Camera] ⚠️ Insecure context detected! getUserMedia requires HTTPS.');
+        
+        // Show warning banner
+        const warning = document.createElement('div');
+        warning.style.cssText = `
+            background: linear-gradient(135deg, #ff6b6b, #ee5a5a);
+            color: white;
+            padding: 16px 20px;
+            text-align: center;
+            font-weight: 600;
+            position: sticky;
+            top: 0;
+            z-index: 9999;
+        `;
+        warning.innerHTML = `
+            ⚠️ <strong>Kamera butuh HTTPS!</strong><br>
+            <small>
+                Kamu akses via HTTP. Buka via 
+                <a href="https://timsupport-camera.hf.space/" style="color:#fff;text-decoration:underline;">HF Spaces (HTTPS)</a>
+                atau gunakan tunnel (Localtonet/Cloudflare).
+            </small>
+        `;
+        document.body.prepend(warning);
+    }
+
+    // Feature detection check
+    const hasMediaAPI = navigator.mediaDevices && navigator.mediaDevices.getUserMedia;
+    const hasLegacyAPI = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
+    
+    if (!hasMediaAPI && !hasLegacyAPI) {
+        console.error('[Camera] ❌ No getUserMedia API available');
+    } else {
+        console.log('[Camera] ✅ getUserMedia API available');
+    }
 }
 
 init();
