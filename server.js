@@ -6,153 +6,175 @@ const path = require('path');
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
-    cors: {
-        origin: "*",
-        methods: ["GET", "POST"]
-    }
+    cors: { origin: "*", methods: ["GET", "POST"] }
 });
 
-// Serve static files
+// Serve public files
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Rooms store active broadcaster info
-const rooms = {};
+// Root → landing page
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'home.html'));
+});
+
+// Track connected clients (camera devices)
+const clients = {}; // clientId -> { name, socketId, status, connectedAt }
+
+// Track active WebRTC sessions
+const sessions = {}; // sessionId -> { clientId, adminId, status }
 
 io.on('connection', (socket) => {
-    console.log(`[Socket] User connected: ${socket.id}`);
+    console.log(`[Socket] Connected: ${socket.id}`);
 
-    // Broadcaster starts stream
-    socket.on('start-broadcast', ({ roomCode, deviceInfo }) => {
-        if (rooms[roomCode]) {
-            socket.emit('broadcast-error', { message: 'Room sudah digunakan' });
-            return;
-        }
-        rooms[roomCode] = {
-            broadcasterId: socket.id,
-            deviceInfo,
-            viewers: [],
-            createdAt: Date.now()
+    // === CLIENT SIDE (Camera Device) ===
+
+    // Client registers itself
+    socket.on('client-register', ({ clientId, clientName }) => {
+        clients[clientId] = {
+            name: clientName,
+            socketId: socket.id,
+            status: 'online',
+            connectedAt: new Date().toISOString()
         };
-        socket.join(roomCode);
-        socket.roomCode = roomCode;
-        console.log(`[Room] Broadcaster ${socket.id} started room: ${roomCode}`);
-        socket.emit('broadcast-started', { roomCode });
+        socket.clientId = clientId;
+        console.log(`[Client] Registered: ${clientId} (${clientName})`);
+
+        // Notify all admins about new client
+        io.emit('client-list-updated', getClientsList());
     });
 
-    // Viewer wants to join
-    socket.on('join-room', ({ roomCode }) => {
-        const room = rooms[roomCode];
-        if (!room) {
-            socket.emit('join-error', { message: 'Room tidak ditemukan' });
-            return;
-        }
-        if (!room.broadcasterId) {
-            socket.emit('join-error', { message: 'Belum ada yang streaming' });
-            return;
-        }
-        socket.join(roomCode);
-        socket.roomCode = roomCode;
-        socket.isViewer = true;
-        room.viewers.push(socket.id);
-        
-        // Notify broadcaster
-        socket.to(room.broadcasterId).emit('viewer-joined', {
-            viewerId: socket.id,
-            viewerCount: room.viewers.length
-        });
-        
-        socket.emit('room-joined', {
-            roomCode,
-            broadcasterId: room.broadcasterId,
-            deviceInfo: room.deviceInfo
-        });
-        console.log(`[Room] Viewer ${socket.id} joined room: ${roomCode}`);
-    });
-
-    // WebRTC signaling: offer (broadcaster → viewer)
-    socket.on('webrtc-offer', ({ targetId, offer }) => {
-        io.to(targetId).emit('webrtc-offer', {
-            fromId: socket.id,
-            offer
-        });
-    });
-
-    // WebRTC signaling: answer (viewer → broadcaster)
-    socket.on('webrtc-answer', ({ targetId, answer }) => {
-        io.to(targetId).emit('webrtc-answer', {
-            fromId: socket.id,
-            answer
-        });
-    });
-
-    // WebRTC signaling: ICE candidate
-    socket.on('webrtc-ice-candidate', ({ targetId, candidate }) => {
-        io.to(targetId).emit('webrtc-ice-candidate', {
-            fromId: socket.id,
-            candidate
-        });
-    });
-
-    // Remote control commands from viewer to broadcaster
-    socket.on('remote-command', ({ roomCode, command }) => {
-        const room = rooms[roomCode];
-        if (room && room.broadcasterId) {
-            socket.to(room.broadcasterId).emit('remote-command', {
-                fromViewer: socket.id,
-                command
-            });
+    // Client starts camera (ready to stream)
+    socket.on('client-ready', ({ clientId }) => {
+        if (clients[clientId]) {
+            clients[clientId].status = 'streaming';
+            io.emit('client-list-updated', getClientsList());
         }
     });
 
-    // Broadcaster sends screenshot to viewers
-    socket.on('broadcast-screenshot', ({ roomCode, imageData }) => {
-        socket.to(roomCode).emit('new-screenshot', { imageData });
+    // Client sends WebRTC offer to admin
+    socket.on('client-offer', ({ clientId, offer }) => {
+        // Find admin session for this client
+        const session = Object.values(sessions).find(s => s.clientId === clientId && s.adminId);
+        if (session) {
+            io.to(session.adminId).emit('webrtc-offer', { clientId, offer });
+        }
     });
 
-    // Broadcaster status updates
-    socket.on('broadcaster-status', ({ roomCode, isRecording }) => {
-        socket.to(roomCode).emit('stream-status', { isRecording });
+    // Client receives WebRTC answer from admin
+    socket.on('client-answer-relay', ({ targetClientId, answer }) => {
+        const client = Object.values(clients).find(c => c.socketId === socket.id);
+        // This is admin sending answer back, find the client socket
+        const targetClient = Object.values(clients).find(c => c.socketId === targetClientId);
+        if (targetClient) {
+            io.to(targetClient.socketId).emit('webrtc-answer', { answer });
+        }
     });
 
-    // Broadcaster stops
-    socket.on('stop-broadcast', ({ roomCode }) => {
-        io.to(roomCode).emit('broadcaster-disconnected');
-        if (rooms[roomCode]) {
-            delete rooms[roomCode];
-            console.log(`[Room] Room ${roomCode} stopped by broadcaster`);
+    // Client receives ICE candidate
+    socket.on('client-ice-relay', ({ targetClientId, candidate }) => {
+        const targetClient = Object.values(clients).find(c => c.socketId === targetClientId);
+        if (targetClient) {
+            io.to(targetClient.socketId).emit('webrtc-ice-candidate', { candidate });
+        }
+    });
+
+    // Client sends ICE candidate to admin
+    socket.on('client-ice', ({ clientId, candidate }) => {
+        const session = Object.values(sessions).find(s => s.clientId === clientId && s.adminId);
+        if (session) {
+            io.to(session.adminId).emit('webrtc-ice-candidate', { clientId, candidate });
+        }
+    });
+
+    // Client screenshot
+    socket.on('client-screenshot', ({ clientId, imageData }) => {
+        io.emit('client-screenshot', { clientId, imageData, timestamp: Date.now() });
+    });
+
+    // Client status update
+    socket.on('client-status', ({ clientId, isRecording }) => {
+        io.emit('client-status-update', { clientId, isRecording });
+    });
+
+    // === ADMIN SIDE (Monitoring Dashboard) ===
+
+    // Admin wants to monitor a client
+    socket.on('admin-monitor', ({ clientId }) => {
+        socket.adminId = socket.id;
+        sessions[clientId] = { clientId, adminId: socket.id, status: 'active', startedAt: Date.now() };
+        console.log(`[Admin] Monitoring ${clientId} from ${socket.id}`);
+
+        // Notify client to start streaming
+        const client = clients[clientId];
+        if (client) {
+            io.to(client.socketId).emit('admin-request-stream', { adminId: socket.id });
+        }
+    });
+
+    // Admin stops monitoring
+    socket.on('admin-stop-monitor', ({ clientId }) => {
+        if (sessions[clientId]) {
+            delete sessions[clientId];
+            const client = clients[clientId];
+            if (client) {
+                io.to(client.socketId).emit('admin-stop-stream', { clientId });
+            }
+        }
+    });
+
+    // Admin sends remote command to client
+    socket.on('admin-command', ({ clientId, command }) => {
+        const client = clients[clientId];
+        if (client) {
+            io.to(client.socketId).emit('remote-command', { command });
+        }
+    });
+
+    // Admin sends WebRTC answer to client
+    socket.on('admin-answer', ({ clientId, answer }) => {
+        const client = clients[clientId];
+        if (client) {
+            io.to(client.socketId).emit('webrtc-answer', { answer });
+        }
+    });
+
+    // Admin sends ICE candidate to client
+    socket.on('admin-ice', ({ clientId, candidate }) => {
+        const client = clients[clientId];
+        if (client) {
+            io.to(client.socketId).emit('webrtc-ice-candidate', { candidate });
         }
     });
 
     // Disconnect
     socket.on('disconnect', () => {
-        console.log(`[Socket] User disconnected: ${socket.id}`);
-        
-        if (socket.roomCode) {
-            const room = rooms[socket.roomCode];
-            if (room) {
-                if (room.broadcasterId === socket.id) {
-                    // Broadcaster disconnected — notify all viewers
-                    io.to(room.roomCode).emit('broadcaster-disconnected');
-                    delete rooms[socket.roomCode];
-                    console.log(`[Room] Room ${socket.roomCode} removed (broadcaster left)`);
-                } else {
-                    // Viewer disconnected
-                    room.viewers = room.viewers.filter(id => id !== socket.id);
-                    if (room.broadcasterId) {
-                        socket.to(room.broadcasterId).emit('viewer-left', {
-                            viewerId: socket.id,
-                            viewerCount: room.viewers.length
-                        });
-                    }
-                }
-            }
+        console.log(`[Socket] Disconnected: ${socket.id}`);
+
+        // Handle client disconnect
+        if (socket.clientId && clients[socket.clientId]) {
+            delete clients[socket.clientId];
+            io.emit('client-list-updated', getClientsList());
         }
+
+        // Clean up admin sessions
+        Object.keys(sessions).forEach(key => {
+            if (sessions[key].adminId === socket.id) {
+                delete sessions[key];
+            }
+        });
     });
 });
 
+function getClientsList() {
+    return Object.entries(clients).map(([id, data]) => ({
+        id,
+        ...data
+    }));
+}
+
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
-    console.log(`🎬 Camera Stream Server running on port ${PORT}`);
-    console.log(`   Local: http://localhost:${PORT}`);
-    console.log(`   Network: http://<YOUR_IP>:${PORT}`);
+    console.log(`🎬 Camera Monitoring Server on port ${PORT}`);
+    console.log(`   Admin: http://localhost:${PORT}/`);
+    console.log(`   Client: http://localhost:${PORT}/client.html`);
 });

@@ -2,38 +2,38 @@
 
 // === DOM Elements ===
 const streamVideo = document.getElementById('streamVideo');
-const joinSetup = document.getElementById('joinSetup');
+const clientListSection = document.getElementById('clientListSection');
 const streamSection = document.getElementById('streamSection');
 const screenshotsSection = document.getElementById('screenshotsSection');
 const screenshots = document.getElementById('screenshots');
-const roomCodeInput = document.getElementById('roomCode');
 const connectionStatus = document.getElementById('connectionStatus');
 const streamText = document.getElementById('streamText');
-const deviceInfo = document.getElementById('deviceInfo');
+const streamTitle = document.getElementById('streamTitle');
+const clientList = document.getElementById('clientList');
 
 // === State ===
 let socket = null;
 let peerConnection = null;
-let currentRoomCode = null;
-let broadcasterId = null;
+let monitoringClientId = null;
+let connectedClients = {}; // clientId -> { name, status, socketId, connectedAt }
 
 const rtcConfig = {
     iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' }
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
+        {
+            urls: 'turn:openrelay.metered.ca:80',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+        },
+        {
+            urls: 'turn:openrelay.metered.ca:443',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+        }
     ]
 };
-
-// === Check URL params ===
-function initFromUrl() {
-    const params = new URLSearchParams(window.location.search);
-    const room = params.get('room');
-    if (room) {
-        roomCodeInput.value = room.toUpperCase();
-        // Auto-join after short delay (socket needs to connect first)
-        setTimeout(() => { joinRoom(); }, 1000);
-    }
-}
 
 // === Socket.IO ===
 function connectSocket() {
@@ -49,44 +49,35 @@ function connectSocket() {
         connectionStatus.querySelector('.status-text').textContent = 'Disconnected';
     });
 
-    socket.on('room-joined', ({ broadcasterId, deviceInfo }) => {
-        console.log('[Viewer] Joined room, broadcaster:', broadcasterId);
-        window.broadcasterId = broadcasterId;
-        currentRoomCode = roomCodeInput.value.toUpperCase();
-
-        if (deviceInfo) {
-            deviceInfo.textContent = `📱 ${deviceInfo.name} — ${deviceInfo.platform}`;
-            deviceInfo.classList.remove('hidden');
-        }
-
-        streamText.textContent = '⏳ Menunggu stream dari broadcaster...';
-
-        // Setup peer connection - viewer waits for broadcaster's offer
-        setupPeerConnection();
+    // Client list updated
+    socket.on('client-list-updated', (clients) => {
+        console.log('[Admin] Client list updated:', clients);
+        connectedClients = {};
+        clients.forEach(c => { connectedClients[c.id] = c; });
+        renderClientList(clients);
     });
 
-    socket.on('join-error', ({ message }) => { alert(message); });
+    // WebRTC: Receive offer from client
+    socket.on('webrtc-offer', async ({ clientId, offer }) => {
+        console.log('[WebRTC] Received offer from client:', clientId);
 
-    // === WebRTC: Receive offer from broadcaster ===
-    socket.on('webrtc-offer', async ({ fromId, offer }) => {
-        console.log('[WebRTC] Received offer from broadcaster');
-        if (!peerConnection) setupPeerConnection();
+        if (!peerConnection) setupPeerConnection(clientId);
 
         try {
             await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
             const answer = await peerConnection.createAnswer();
             await peerConnection.setLocalDescription(answer);
 
-            // Send answer back to broadcaster
-            socket.emit('webrtc-answer', { targetId: fromId, answer });
-            console.log('[WebRTC] Answer sent to broadcaster');
+            // Send answer back to client
+            socket.emit('admin-answer', { clientId, answer });
+            console.log('[WebRTC] Answer sent to client:', clientId);
         } catch (err) {
             console.error('[WebRTC] Failed to handle offer:', err);
         }
     });
 
-    socket.on('webrtc-ice-candidate', async ({ fromId, candidate }) => {
-        console.log('[WebRTC] ICE candidate received');
+    socket.on('webrtc-ice-candidate', async ({ clientId, candidate }) => {
+        console.log('[WebRTC] ICE candidate from client:', clientId);
         if (peerConnection && candidate) {
             try {
                 await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
@@ -96,39 +87,41 @@ function connectSocket() {
         }
     });
 
-    // Stream status updates
-    socket.on('stream-status', ({ isRecording }) => {
-        const dot = document.querySelector('.live-dot');
-        if (isRecording) {
-            streamText.textContent = '🔴 Broadcaster sedang merekam';
-            if (dot) dot.style.background = '#ff6b6b';
-        } else {
-            streamText.textContent = '🟢 Live';
-            if (dot) dot.style.background = '#00cec9';
-        }
-    });
-
-    socket.on('broadcaster-disconnected', () => {
-        alert('Broadcaster telah memutus koneksi');
-        streamVideo.srcObject = null;
-        joinSetup.classList.remove('hidden');
-        streamSection.classList.add('hidden');
-        if (peerConnection) { peerConnection.close(); peerConnection = null; }
-    });
-
-    // Screenshots from broadcaster
-    socket.on('new-screenshot', ({ imageData }) => {
+    // Client screenshot
+    socket.on('client-screenshot', ({ clientId, imageData, timestamp }) => {
+        console.log('[Admin] Screenshot from:', clientId);
         screenshotsSection.classList.remove('hidden');
         const img = document.createElement('img');
         img.src = imageData;
+        img.title = new Date(timestamp).toLocaleTimeString();
         img.onclick = () => openImageModal(imageData);
         screenshots.prepend(img);
         while (screenshots.children.length > 20) screenshots.removeChild(screenshots.lastChild);
     });
+
+    // Client status update
+    socket.on('client-status-update', ({ clientId, isRecording }) => {
+        const client = connectedClients[clientId];
+        if (client && clientId === monitoringClientId) {
+            if (isRecording) {
+                streamText.textContent = '🔴 Client sedang merekam';
+                document.querySelector('.live-dot').style.background = '#ff6b6b';
+            } else {
+                streamText.textContent = '🟢 Live';
+                document.querySelector('.live-dot').style.background = '#00cec9';
+            }
+        }
+    });
 }
 
-// === WebRTC Peer Connection (Viewer = recvonly) ===
-function setupPeerConnection() {
+// === WebRTC Peer Connection (Admin = recvonly) ===
+function setupPeerConnection(clientId) {
+    // Close existing connection if any
+    if (peerConnection) {
+        peerConnection.close();
+        peerConnection = null;
+    }
+
     peerConnection = new RTCPeerConnection(rtcConfig);
 
     // Show stream when tracks arrive
@@ -143,13 +136,10 @@ function setupPeerConnection() {
         }
     };
 
-    // Send ICE candidates to broadcaster
+    // Send ICE candidates to client
     peerConnection.onicecandidate = (event) => {
-        if (event.candidate && window.broadcasterId) {
-            socket.emit('webrtc-ice-candidate', {
-                targetId: window.broadcasterId,
-                candidate: event.candidate
-            });
+        if (event.candidate && monitoringClientId) {
+            socket.emit('admin-ice', { clientId: monitoringClientId, candidate: event.candidate });
         }
     };
 
@@ -163,20 +153,93 @@ function setupPeerConnection() {
     };
 }
 
-// === Join Room ===
-function joinRoom() {
-    const roomCode = roomCodeInput.value.trim().toUpperCase();
-    if (!roomCode) { alert('Masukkan kode room'); return; }
+// === Render Client List ===
+function renderClientList(clients) {
+    if (clients.length === 0) {
+        clientList.innerHTML = `
+            <div class="client-empty">
+                <p>Belum ada device terhubung</p>
+                <p class="hint">Device buka halaman camera untuk mulai</p>
+            </div>`;
+        return;
+    }
 
-    socket.emit('join-room', { roomCode });
+    clientList.innerHTML = clients.map(client => {
+        const isStreaming = client.status === 'streaming';
+        const isMonitoring = client.id === monitoringClientId;
+        return `
+        <div class="client-card ${isMonitoring ? 'monitoring' : ''}" data-id="${client.id}">
+            <div class="client-info">
+                <div class="client-name">${client.name}</div>
+                <div class="client-meta">
+                    <span class="client-status-badge ${isStreaming ? 'streaming' : 'online'}">
+                        ${isStreaming ? '🔴 Streaming' : '🟢 Online'}
+                    </span>
+                    <span class="client-id">${client.id}</span>
+                </div>
+            </div>
+            <div class="client-actions">
+                ${isMonitoring
+                    ? `<button class="btn btn-danger btn-small" onclick="stopMonitoring('${client.id}')">⏹️ Stop</button>`
+                    : `<button class="btn btn-primary btn-small" onclick="startMonitoring('${client.id}')" ${!isStreaming ? 'disabled' : ''}>📹 Monitor</button>`
+                }
+            </div>
+        </div>`;
+    }).join('');
 }
+
+// === Start/Stop Monitoring ===
+function startMonitoring(clientId) {
+    const client = connectedClients[clientId];
+    if (!client) return;
+
+    monitoringClientId = clientId;
+    streamTitle.textContent = `📹 ${client.name}`;
+    streamText.textContent = '⏳ Meminta stream...';
+
+    streamSection.classList.remove('hidden');
+    screenshotsSection.classList.add('hidden');
+    screenshots.innerHTML = '';
+
+    // Tell server to start monitoring
+    socket.emit('admin-monitor', { clientId });
+
+    // Setup peer connection (will receive offer from client)
+    setupPeerConnection(clientId);
+
+    // Update client list UI
+    document.querySelectorAll('.client-card').forEach(card => {
+        card.classList.toggle('monitoring', card.dataset.id === clientId);
+    });
+}
+
+function stopMonitoring(clientId) {
+    socket.emit('admin-stop-monitor', { clientId });
+
+    if (peerConnection) {
+        peerConnection.close();
+        peerConnection = null;
+    }
+
+    streamVideo.srcObject = null;
+    streamSection.classList.add('hidden');
+    monitoringClientId = null;
+    streamText.textContent = 'Menunggu stream...';
+
+    renderClientList(Object.values(connectedClients));
+}
+
+// Make functions globally accessible for onclick handlers
+window.startMonitoring = startMonitoring;
+window.stopMonitoring = stopMonitoring;
 
 // === Remote Commands ===
 function sendRemoteCommand(command) {
-    socket.emit('remote-command', { roomCode: currentRoomCode, command });
+    if (!monitoringClientId) return;
+    socket.emit('admin-command', { clientId: monitoringClientId, command });
 }
 
-// === Modal ===
+// === Image Modal ===
 function openImageModal(src) {
     const modal = document.getElementById('imageModal');
     const img = document.getElementById('fullImage');
@@ -189,13 +252,16 @@ document.getElementById('modalClose').addEventListener('click', () => {
 });
 
 // === Event Listeners ===
-document.getElementById('joinRoom').addEventListener('click', joinRoom);
 document.getElementById('remoteCapture').addEventListener('click', () => sendRemoteCommand('capture'));
 document.getElementById('remoteRecord').addEventListener('click', () => sendRemoteCommand('record'));
+document.getElementById('remoteSwitch').addEventListener('click', () => sendRemoteCommand('switch'));
+document.getElementById('remoteFlash').addEventListener('click', () => sendRemoteCommand('flash'));
+document.getElementById('stopMonitor').addEventListener('click', () => {
+    if (monitoringClientId) stopMonitoring(monitoringClientId);
+});
 
 // === Init ===
 function init() {
-    initFromUrl();
     connectSocket();
 }
 

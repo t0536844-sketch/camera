@@ -3,14 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>👁️ Viewer - Camera Stream</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>👁️</text></svg>">
+    <title>🎬 Admin — Camera Monitor</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎬</text></svg>">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
+    <!-- Header -->
     <header class="header">
         <div class="header-content">
-            <h1>👁️ Viewer</h1>
+            <h1>🎬 Admin Monitor</h1>
             <div class="connection-status" id="connectionStatus">
                 <span class="status-dot"></span>
                 <span class="status-text">Connecting...</span>
@@ -19,18 +20,23 @@
     </header>
 
     <main class="container">
-        <!-- Join Room -->
-        <section id="joinSetup" class="card">
-            <h2>🔗 Join Room</h2>
-            <div class="form-group">
-                <label for="roomCode">Kode Room</label>
-                <input type="text" id="roomCode" placeholder="Masukkan kode room..." maxlength="6" style="text-transform: uppercase;">
+        <!-- Client List -->
+        <section id="clientListSection" class="card">
+            <h2>📡 Device Terhubung</h2>
+            <div id="clientList" class="client-list">
+                <div class="client-empty">
+                    <p>Belum ada device terhubung</p>
+                    <p class="hint">Device buka <code>/app.html</code> untuk mulai</p>
+                </div>
             </div>
-            <button class="btn btn-primary btn-full" id="joinRoom">👁️ Lihat Stream</button>
         </section>
 
-        <!-- Stream View -->
+        <!-- Stream View (when monitoring) -->
         <section id="streamSection" class="card hidden">
+            <div class="stream-header">
+                <h2 id="streamTitle">📹 Stream</h2>
+                <button class="btn btn-danger btn-small" id="stopMonitor">⏹️ Stop Monitor</button>
+            </div>
             <div class="video-wrapper">
                 <video id="streamVideo" autoplay playsinline></video>
                 <div id="streamStatus" class="stream-status">
@@ -39,17 +45,18 @@
                 </div>
             </div>
 
+            <!-- Remote Controls -->
             <div class="controls">
-                <button class="ctrl-btn" id="remoteCapture" title="Request Foto">📷 Request Foto</button>
-                <button class="ctrl-btn" id="remoteRecord" title="Request Rekam">⏺️ Request Rekam</button>
+                <button class="ctrl-btn" id="remoteCapture" title="Request Foto">📷</button>
+                <button class="ctrl-btn" id="remoteRecord" title="Request Rekam">⏺️</button>
+                <button class="ctrl-btn" id="remoteSwitch" title="Ganti Kamera">🔄</button>
+                <button class="ctrl-btn" id="remoteFlash" title="Flash">🔦</button>
             </div>
-
-            <div id="deviceInfo" class="device-info hidden"></div>
         </section>
 
-        <!-- Screenshots from broadcaster -->
+        <!-- Screenshots from client -->
         <section id="screenshotsSection" class="card hidden">
-            <h2>📸 Screenshots dari Broadcaster</h2>
+            <h2>📸 Screenshots</h2>
             <div id="screenshots" class="gallery-grid"></div>
         </section>
     </main>

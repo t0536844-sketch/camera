@@ -30,17 +30,30 @@ let recordingSeconds = 0;
 let currentFacingMode = 'user';
 let flashActive = false;
 let videoTrack = null;
-let currentRoomCode = null;
-let viewerCount = 0;
 
-// WebRTC state for broadcaster
-let peerConnections = {}; // viewerId -> RTCPeerConnection
+// WebRTC state for client
+let peerConnection = null;
+let adminSocketId = null;
 const rtcConfig = {
     iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' }
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
+        {
+            urls: 'turn:openrelay.metered.ca:80',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+        },
+        {
+            urls: 'turn:openrelay.metered.ca:443',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+        }
     ]
 };
+
+// Unique client ID
+const CLIENT_ID = 'client-' + Math.random().toString(36).substring(2, 8);
 
 // === IndexedDB Gallery ===
 const DB_NAME = 'CameraStreamGallery';
@@ -139,6 +152,9 @@ function connectSocket() {
     socket.on('connect', () => {
         connectionStatus.classList.add('connected');
         connectionStatus.querySelector('.status-text').textContent = 'Connected';
+        // Register as client device
+        const deviceName = deviceNameInput.value.trim() || 'Camera Device';
+        socket.emit('client-register', { clientId: CLIENT_ID, clientName: deviceName });
     });
 
     socket.on('disconnect', () => {
@@ -146,151 +162,110 @@ function connectSocket() {
         connectionStatus.querySelector('.status-text').textContent = 'Disconnected';
     });
 
-    socket.on('broadcast-started', ({ roomCode }) => {
-        showShareSection(roomCode);
+    // Admin wants to monitor this client
+    socket.on('admin-request-stream', ({ adminId }) => {
+        console.log('[Client] Admin requesting stream:', adminId);
+        adminSocketId = adminId;
+        startWebRTCWithAdmin();
     });
 
-    socket.on('broadcast-error', ({ message }) => { alert(message); });
-
-    socket.on('viewer-joined', ({ viewerId, viewerCount }) => {
-        updateViewerCount(viewerCount);
-        // Broadcaster creates offer for new viewer
-        createPeerConnectionForViewer(viewerId);
-    });
-
-    socket.on('viewer-left', ({ viewerCount }) => { updateViewerCount(viewerCount); });
-
-    // WebRTC: Viewer sends answer back
-    socket.on('webrtc-answer', ({ fromId, answer }) => {
-        const pc = peerConnections[fromId];
-        if (pc) {
-            pc.setRemoteDescription(new RTCSessionDescription(answer));
+    socket.on('admin-stop-stream', () => {
+        console.log('[Client] Admin stopped monitoring');
+        adminSocketId = null;
+        if (peerConnection) {
+            peerConnection.close();
+            peerConnection = null;
         }
     });
 
-    socket.on('webrtc-ice-candidate', ({ fromId, candidate }) => {
-        const pc = peerConnections[fromId];
-        if (pc && candidate) {
-            pc.addIceCandidate(new RTCIceCandidate(candidate));
+    // Receive WebRTC answer from admin
+    socket.on('webrtc-answer', ({ answer }) => {
+        if (peerConnection) {
+            peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
         }
     });
 
-    // Remote commands from viewers
-    socket.on('remote-command', ({ fromViewer, command }) => {
+    // Receive ICE candidate from admin
+    socket.on('webrtc-ice-candidate', ({ candidate }) => {
+        if (peerConnection && candidate) {
+            peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+        }
+    });
+
+    // Remote commands from admin
+    socket.on('remote-command', ({ command }) => {
+        console.log('[Client] Remote command:', command);
         if (command === 'capture') capturePhoto();
-        if (command === 'record' && mediaRecorder && mediaRecorder.state === 'inactive') {
-            startRecording();
-            setTimeout(() => stopRecording(), 5000);
+        else if (command === 'record') {
+            if (mediaRecorder && mediaRecorder.state === 'inactive') {
+                startRecording();
+                setTimeout(() => stopRecording(), 5000);
+            }
         }
+        else if (command === 'switch') switchCamera();
+        else if (command === 'flash') toggleFlash();
+        else if (command === 'startCamera') startCamera();
+        else if (command === 'stopCamera') stopCamera();
     });
 }
 
-function updateViewerCount(count) {
-    viewerCount = count;
-    viewerCountEl.textContent = `👁️ ${count} viewer${count !== 1 ? 's' : ''}`;
-}
+// === WebRTC: Create connection with admin ===
+async function startWebRTCWithAdmin() {
+    if (!stream) {
+        console.log('[Client] No stream yet, waiting...');
+        return;
+    }
 
-// === WebRTC: Create peer connection for each viewer ===
-async function createPeerConnectionForViewer(viewerId) {
-    console.log('[WebRTC] Creating peer connection for viewer:', viewerId);
+    console.log('[WebRTC] Creating peer connection for admin');
 
     const pc = new RTCPeerConnection(rtcConfig);
-    peerConnections[viewerId] = pc;
+    peerConnection = pc;
 
     // Add camera stream tracks
     stream.getTracks().forEach(track => {
         pc.addTrack(track, stream);
     });
 
-    // Send ICE candidates to viewer
+    // Send ICE candidates to admin
     pc.onicecandidate = (event) => {
         if (event.candidate) {
-            socket.emit('webrtc-ice-candidate', { targetId: viewerId, candidate: event.candidate });
+            socket.emit('client-ice', { clientId: CLIENT_ID, candidate: event.candidate });
         }
     };
 
     pc.onconnectionstatechange = () => {
-        console.log(`[WebRTC] Connection state for ${viewerId}:`, pc.connectionState);
+        console.log('[WebRTC] Connection state:', pc.connectionState);
         if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
-            delete peerConnections[viewerId];
+            peerConnection = null;
         }
     };
 
-    // Create offer and send to viewer
+    // Create offer and send to admin
     try {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
-        socket.emit('webrtc-offer', { targetId: viewerId, offer });
-        console.log('[WebRTC] Offer sent to viewer:', viewerId);
+        socket.emit('client-offer', { clientId: CLIENT_ID, offer });
+        console.log('[WebRTC] Offer sent to admin');
     } catch (err) {
         console.error('[WebRTC] Failed to create offer:', err);
-        delete peerConnections[viewerId];
-    }
-}
-
-// === Room Setup ===
-function generateCode() {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    let code = '';
-    for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
-    roomCodeInput.value = code;
-}
-
-async function startBroadcast() {
-    const roomCode = roomCodeInput.value.trim().toUpperCase() || generateCodeAndSet();
-    const deviceName = deviceNameInput.value.trim() || 'Kamera';
-
-    // Start camera FIRST
-    await startCamera();
-    if (!stream) return;
-
-    // Then register with server
-    socket.emit('start-broadcast', {
-        roomCode,
-        deviceInfo: { name: deviceName, platform: navigator.platform }
-    });
-}
-
-function generateCodeAndSet() {
-    generateCode();
-    return roomCodeInput.value;
-}
-
-// === Share Section ===
-function showShareSection(roomCode) {
-    currentRoomCode = roomCode;
-    cameraSection.classList.remove('hidden');
-    shareSection.classList.remove('hidden');
-
-    const baseUrl = window.location.origin;
-    const shareUrl = `${baseUrl}/viewer.html?room=${roomCode}`;
-    shareLinkInput.value = shareUrl;
-
-    if (typeof QRCode !== 'undefined') {
-        QRCode.toCanvas(document.getElementById('qrCode'), shareUrl, {
-            width: 200, margin: 2,
-            color: { dark: '#0f0f1a', light: '#ffffff' }
-        }, (err) => { if (err) console.error('QR Error:', err); });
+        peerConnection = null;
     }
 }
 
 // === Camera Functions ===
 async function startCamera() {
     try {
-        console.log('[Camera] Checking mediaDevices...');
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
             const legacy = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
             if (legacy) return startCameraLegacy(legacy);
             throw new Error('Browser tidak mendukung. Pastikan buka via HTTPS.');
         }
 
-        console.log('[Camera] Requesting camera access...');
         stream = await navigator.mediaDevices.getUserMedia({
             video: { facingMode: currentFacingMode, width: { ideal: 1280 }, height: { ideal: 720 } },
             audio: false
         });
 
-        console.log('[Camera] Stream obtained, tracks:', stream.getTracks().length);
         videoPreview.srcObject = stream;
         try { await videoPreview.play(); } catch (e) { console.warn('[Camera] Auto-play blocked:', e.message); }
 
@@ -299,11 +274,19 @@ async function startCamera() {
         document.getElementById('flashBtn').disabled = !caps.torch;
 
         initMediaRecorder();
+
+        // Notify server that client is ready to stream
+        socket.emit('client-ready', { clientId: CLIENT_ID });
+
+        // If admin is already monitoring, start WebRTC
+        if (adminSocketId) {
+            startWebRTCWithAdmin();
+        }
     } catch (err) {
         console.error('[Camera] Error:', err.name, err.message);
         let msg = 'Tidak dapat mengakses kamera.\n\n';
         if (!navigator.mediaDevices) {
-            msg += '⚠️ getUserMedia butuh HTTPS!\n• Buka via: https://timsupport-camera.hf.space/\n• Atau via tunnel (Localtonet/Cloudflare)\n• URL saat ini: ' + window.location.href;
+            msg += '⚠️ getUserMedia butuh HTTPS!\n• Buka via tunnel (Localtonet/Cloudflare)\n• URL saat ini: ' + window.location.href;
         } else if (err.name === 'NotAllowedError') {
             msg += '❌ Akses kamera ditolak. Izinkan di browser settings.';
         } else if (err.name === 'NotFoundError') {
@@ -320,7 +303,9 @@ function startCameraLegacy(getUserMedia) {
         getUserMedia.call(navigator, { video: { facingMode: currentFacingMode }, audio: false },
             (s) => {
                 stream = s; videoPreview.srcObject = stream; videoPreview.play();
-                videoTrack = stream.getVideoTracks()[0]; initMediaRecorder(); resolve();
+                videoTrack = stream.getVideoTracks()[0]; initMediaRecorder();
+                socket.emit('client-ready', { clientId: CLIENT_ID });
+                resolve();
             }, (e) => reject(e));
     });
 }
@@ -328,9 +313,8 @@ function startCameraLegacy(getUserMedia) {
 function stopCamera() {
     if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; videoPreview.srcObject = null; }
     stopRecording();
-    // Close all peer connections
-    Object.values(peerConnections).forEach(pc => pc.close());
-    peerConnections = {};
+    if (peerConnection) { peerConnection.close(); peerConnection = null; }
+    adminSocketId = null;
 }
 
 function initMediaRecorder() {
@@ -344,18 +328,19 @@ function initMediaRecorder() {
             clearInterval(recordingInterval);
             recordingSeconds = 0;
             recordingIndicator.classList.add('hidden');
-            socket.emit('broadcaster-status', { roomCode: currentRoomCode, isRecording: false });
+            socket.emit('client-status', { clientId: CLIENT_ID, isRecording: false });
         };
     } catch (e) { console.error('MediaRecorder error:', e); }
 }
 
 function capturePhoto() {
+    if (!videoPreview.srcObject) return;
     photoCanvas.width = videoPreview.videoWidth;
     photoCanvas.height = videoPreview.videoHeight;
     photoCanvas.getContext('2d').drawImage(videoPreview, 0, 0);
     const dataUrl = photoCanvas.toDataURL('image/png');
     saveToGallery(dataUrl, 'image');
-    socket.emit('broadcast-screenshot', { roomCode: currentRoomCode, imageData: dataUrl });
+    socket.emit('client-screenshot', { clientId: CLIENT_ID, imageData: dataUrl });
 }
 
 function toggleRecording() {
@@ -374,7 +359,7 @@ function startRecording() {
         const s = (recordingSeconds % 60).toString().padStart(2, '0');
         recordingTimerEl.textContent = `${m}:${s}`;
     }, 1000);
-    socket.emit('broadcaster-status', { roomCode: currentRoomCode, isRecording: true });
+    socket.emit('client-status', { clientId: CLIENT_ID, isRecording: true });
 }
 
 function stopRecording() {
@@ -401,15 +386,6 @@ async function toggleFlash() {
     document.getElementById('flashBtn').classList.toggle('active', flashActive);
 }
 
-function stopBroadcast() {
-    stopCamera();
-    socket.emit('stop-broadcast', { roomCode: currentRoomCode });
-    currentRoomCode = null;
-    cameraSection.classList.add('hidden');
-    shareSection.classList.add('hidden');
-    updateViewerCount(0);
-}
-
 function copyShareLink() {
     shareLinkInput.select();
     navigator.clipboard.writeText(shareLinkInput.value).then(() => {
@@ -420,13 +396,30 @@ function copyShareLink() {
 }
 
 // === Event Listeners ===
-document.getElementById('generateCode').addEventListener('click', generateCode);
-document.getElementById('startBroadcast').addEventListener('click', startBroadcast);
+document.getElementById('startBroadcast').addEventListener('click', () => {
+    startCamera();
+    // Show share link
+    cameraSection.classList.remove('hidden');
+    shareSection.classList.remove('hidden');
+    const shareUrl = window.location.href;
+    shareLinkInput.value = shareUrl;
+    if (typeof QRCode !== 'undefined') {
+        QRCode.toCanvas(document.getElementById('qrCode'), shareUrl, {
+            width: 200, margin: 2,
+            color: { dark: '#0f0f1a', light: '#ffffff' }
+        }, (err) => { if (err) console.error('QR Error:', err); });
+    }
+});
+
 document.getElementById('captureBtn').addEventListener('click', capturePhoto);
 document.getElementById('recordBtn').addEventListener('click', toggleRecording);
 document.getElementById('switchBtn').addEventListener('click', switchCamera);
 document.getElementById('flashBtn').addEventListener('click', toggleFlash);
-document.getElementById('stopBroadcastBtn').addEventListener('click', stopBroadcast);
+document.getElementById('stopBroadcastBtn').addEventListener('click', () => {
+    stopCamera();
+    cameraSection.classList.add('hidden');
+    shareSection.classList.add('hidden');
+});
 document.getElementById('copyLink').addEventListener('click', copyShareLink);
 document.getElementById('clearGallery').addEventListener('click', async () => {
     if (confirm('Hapus semua gallery?')) await clearGalleryDB();
@@ -437,17 +430,14 @@ async function init() {
     connectSocket();
     await openDB();
     await loadGallery();
-    generateCode();
 
+    // HTTPS warning
     if (!window.isSecureContext && window.location.protocol === 'http:') {
         const warning = document.createElement('div');
         warning.style.cssText = 'background:linear-gradient(135deg,#ff6b6b,#ee5a5a);color:white;padding:16px 20px;text-align:center;font-weight:600;position:sticky;top:0;z-index:9999;';
-        warning.innerHTML = '⚠️ <strong>Kamera butuh HTTPS!</strong><br><small>Buka via <a href="https://timsupport-camera.hf.space/" style="color:#fff">HF Spaces</a> atau gunakan tunnel.</small>';
+        warning.innerHTML = '⚠️ <strong>Kamera butuh HTTPS!</strong><br><small>Buka via tunnel (Localtonet/Cloudflare) untuk akses dari internet.</small>';
         document.body.prepend(warning);
     }
-
-    const hasAPI = navigator.mediaDevices?.getUserMedia || navigator.getUserMedia || navigator.webkitGetUserMedia;
-    console.log('[Camera]', hasAPI ? '✅ API available' : '❌ No getUserMedia API');
 }
 
 init();

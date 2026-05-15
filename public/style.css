@@ -415,6 +415,107 @@ input[type="text"]:focus {
     text-align: center;
 }
 
+/* === Client List (Admin Dashboard) === */
+.client-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.client-card {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 16px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border-glass);
+    border-radius: 12px;
+    transition: var(--transition);
+}
+
+.client-card.monitoring {
+    border-color: var(--accent-primary);
+    background: rgba(108, 92, 231, 0.1);
+}
+
+.client-card:hover {
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.client-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.client-name {
+    font-weight: 600;
+    font-size: 0.95rem;
+}
+
+.client-meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.client-status-badge {
+    font-size: 0.75rem;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.client-status-badge.streaming {
+    background: rgba(255, 107, 107, 0.2);
+    color: #ff6b6b;
+}
+
+.client-status-badge.online {
+    background: rgba(0, 206, 201, 0.2);
+    color: #00cec9;
+}
+
+.client-id {
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+    font-family: monospace;
+}
+
+.client-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.client-empty {
+    text-align: center;
+    padding: 30px 0;
+    color: var(--text-secondary);
+}
+
+.client-empty .hint {
+    font-size: 0.8rem;
+    margin-top: 8px;
+}
+
+.client-empty code {
+    background: rgba(255, 255, 255, 0.1);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.8rem;
+}
+
+.stream-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+.stream-header h2 {
+    margin-bottom: 0;
+}
+
 /* === Utilities === */
 .hidden {
     display: none !important;
