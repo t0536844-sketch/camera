@@ -245,24 +245,48 @@ function showShareSection(roomCode) {
 // === Camera Functions ===
 async function startCamera() {
     try {
+        console.log('[Camera] Requesting camera access...');
         stream = await navigator.mediaDevices.getUserMedia({
             video: { facingMode: currentFacingMode, width: { ideal: 1280 }, height: { ideal: 720 } },
             audio: true
         });
 
+        console.log('[Camera] Camera access granted, tracks:', stream.getTracks().length);
         videoPreview.srcObject = stream;
+
+        // Force play for mobile browsers
+        try {
+            await videoPreview.play();
+            console.log('[Camera] Video playback started');
+        } catch (playErr) {
+            console.warn('[Camera] Auto-play blocked:', playErr.message);
+        }
+
         videoTrack = stream.getVideoTracks()[0];
+        if (videoTrack) {
+            console.log('[Camera] Video track label:', videoTrack.label, 'enabled:', videoTrack.enabled);
+        }
 
         // Check flash support
-        const capabilities = videoTrack.getCapabilities();
+        const capabilities = videoTrack ? videoTrack.getCapabilities() : {};
         document.getElementById('flashBtn').disabled = !capabilities.torch;
 
         // Init media recorder
         initMediaRecorder();
 
     } catch (err) {
-        console.error('Camera error:', err);
-        alert('Tidak dapat mengakses kamera: ' + err.message);
+        console.error('[Camera] Error:', err.name, err.message);
+        let errorMsg = 'Tidak dapat mengakses kamera.\n\n';
+        if (err.name === 'NotAllowedError') {
+            errorMsg += '❌ Akses kamera ditolak. Mohon izinkan akses kamera di browser settings.';
+        } else if (err.name === 'NotFoundError') {
+            errorMsg += '❌ Tidak ditemukan kamera di device ini.';
+        } else if (err.name === 'NotReadableError') {
+            errorMsg += '❌ Kamera sedang digunakan oleh aplikasi lain.';
+        } else {
+            errorMsg += err.message;
+        }
+        alert(errorMsg);
     }
 }
 
