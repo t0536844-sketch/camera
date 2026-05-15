@@ -205,7 +205,10 @@ function connectSocket() {
         else if (command === 'switch') switchCamera();
         else if (command === 'flash') toggleFlash();
         else if (command === 'startCamera') startCamera();
-        else if (command === 'stopCamera') stopCamera();
+        else if (command === 'stopCamera') {
+            stopCamera();
+            adminSocketId = null;
+        }
     });
 }
 
@@ -314,7 +317,7 @@ function stopCamera() {
     if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; videoPreview.srcObject = null; }
     stopRecording();
     if (peerConnection) { peerConnection.close(); peerConnection = null; }
-    adminSocketId = null;
+    // Jangan reset adminSocketId agar bisa reconnect setelah switch
 }
 
 function initMediaRecorder() {
@@ -373,8 +376,17 @@ function stopRecording() {
 async function switchCamera() {
     if (!stream) return;
     currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
-    stopCamera();
+
+    // Stop current tracks tapi jangan close peerConnection manual
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+    stopRecording();
+
     await startCamera();
+
+    // Setelah kamera baru aktif, buat ulang WebRTC connection ke admin
+    if (adminSocketId) {
+        startWebRTCWithAdmin();
+    }
 }
 
 async function toggleFlash() {
@@ -417,6 +429,7 @@ document.getElementById('switchBtn').addEventListener('click', switchCamera);
 document.getElementById('flashBtn').addEventListener('click', toggleFlash);
 document.getElementById('stopBroadcastBtn').addEventListener('click', () => {
     stopCamera();
+    adminSocketId = null; // Reset di sini untuk stop broadcast manual
     cameraSection.classList.add('hidden');
     shareSection.classList.add('hidden');
 });
