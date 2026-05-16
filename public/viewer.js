@@ -206,6 +206,7 @@ function setupPeerConnection(roomCode) {
             const video = document.getElementById(`video-${roomCode}`);
             if (video) {
                 video.srcObject = event.streams[0];
+                video.muted = false; // Unmute to play audio
                 video.onloadedmetadata = () => { video.play(); };
             }
             updateStreamCard(roomCode, null, true);
@@ -424,6 +425,129 @@ function escapeHtml(text) {
 window.openChat = openChat;
 window.sendAdminChat = sendAdminChat;
 
+// === Admin Voice Controls ===
+const adminMicStreams = {}; // roomCode -> MediaStream (admin mic)
+const adminSpeakerStates = {}; // roomCode -> { speakerOn: true, micOn: false }
+
+function toggleAdminSpeaker(roomCode) {
+    if (!adminSpeakerStates[roomCode]) {
+        adminSpeakerStates[roomCode] = { speakerOn: true, micOn: false };
+    }
+
+    const video = document.getElementById(`video-${roomCode}`);
+    if (!video) return;
+
+    adminSpeakerStates[roomCode].speakerOn = !adminSpeakerStates[roomCode].speakerOn;
+    video.muted = !adminSpeakerStates[roomCode].speakerOn;
+
+    const spkBtn = document.getElementById(`spkBtn-${roomCode}`);
+    const voiceStatus = document.getElementById(`voiceStatus-${roomCode}`);
+
+    if (adminSpeakerStates[roomCode].speakerOn) {
+        spkBtn.textContent = '🔊';
+        spkBtn.classList.add('active');
+    } else {
+        spkBtn.textContent = '🔇';
+        spkBtn.classList.remove('active');
+    }
+
+    updateVoiceStatus(roomCode);
+}
+
+async function toggleAdminMic(roomCode) {
+    if (!adminSpeakerStates[roomCode]) {
+        adminSpeakerStates[roomCode] = { speakerOn: true, micOn: false };
+    }
+
+    const state = adminSpeakerStates[roomCode];
+
+    if (!state.micOn) {
+        // Turn mic ON
+        try {
+            const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            adminMicStreams[roomCode] = micStream;
+            state.micOn = true;
+
+            const micBtn = document.getElementById(`adminMicBtn-${roomCode}`);
+            micBtn.textContent = '🎤';
+            micBtn.classList.add('active');
+
+            // Send audio to device via WebRTC data channel or socket
+            // For simplicity, we'll use a separate peer connection for admin→device audio
+            setupAdminToDeviceAudio(roomCode, micStream);
+
+            updateVoiceStatus(roomCode);
+        } catch (err) {
+            console.error('[Admin Mic] Error:', err);
+            alert('Tidak dapat mengakses mikrofon');
+        }
+    } else {
+        // Turn mic OFF
+        if (adminMicStreams[roomCode]) {
+            adminMicStreams[roomCode].getTracks().forEach(t => t.stop());
+            delete adminMicStreams[roomCode];
+        }
+        state.micOn = false;
+
+        const micBtn = document.getElementById(`adminMicBtn-${roomCode}`);
+        micBtn.textContent = '🎤';
+        micBtn.classList.remove('active');
+
+        updateVoiceStatus(roomCode);
+    }
+}
+
+async function setupAdminToDeviceAudio(roomCode, micStream) {
+    // Create a new RTCPeerConnection for admin→device audio
+    // This reuses the existing peer connection but adds audio track in reverse
+    const pc = peerConnections[roomCode];
+    if (!pc) {
+        console.warn('[Admin Audio] No peer connection for room:', roomCode);
+        return;
+    }
+
+    // Add admin's mic audio track to the existing connection
+    const audioTrack = micStream.getAudioTracks()[0];
+    if (audioTrack) {
+        const senders = pc.getSenders();
+        const hasAudioSender = senders.some(s => s.track && s.track.kind === 'audio');
+        if (!hasAudioSender) {
+            pc.addTrack(audioTrack);
+            console.log('[Admin Audio] Added mic track to peer connection');
+        } else {
+            // Replace existing audio track
+            const audioSender = senders.find(s => s.track && s.track.kind === 'audio');
+            if (audioSender) {
+                audioSender.replaceTrack(audioTrack);
+                console.log('[Admin Audio] Replaced audio track');
+            }
+        }
+    }
+
+    // Renegotiate to send audio
+    try {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        socket.emit('admin-answer', { roomCode, answer: pc.localDescription });
+        console.log('[Admin Audio] Renegotiated with audio track');
+    } catch (err) {
+        console.error('[Admin Audio] Renegotiation failed:', err);
+    }
+}
+
+function updateVoiceStatus(roomCode) {
+    const voiceStatus = document.getElementById(`voiceStatus-${roomCode}`);
+    if (!voiceStatus) return;
+
+    const state = adminSpeakerStates[roomCode] || { speakerOn: true, micOn: false };
+    const spkText = state.speakerOn ? '🔊 Speaker ON' : '🔇 Speaker OFF';
+    const micText = state.micOn ? '🎤 Mic ON' : '🎤 Mic OFF';
+    voiceStatus.textContent = `${spkText} | ${micText}`;
+}
+
+window.toggleAdminSpeaker = toggleAdminSpeaker;
+window.toggleAdminMic = toggleAdminMic;
+
 // === Stream Cards ===
 function createStreamCard(roomCode) {
     if (document.getElementById(`stream-${roomCode}`)) return;
@@ -449,8 +573,12 @@ function createStreamCard(roomCode) {
                 <button class="ctrl-btn" onclick="sendCommand('${roomCode}', 'switch')" title="Ganti Kamera">🔄</button>
                 <button class="ctrl-btn" onclick="sendCommand('${roomCode}', 'flash')" title="Flash">🔦</button>
                 <button class="ctrl-btn" onclick="openChat('${roomCode}')" title="Chat">💬</button>
+                <button class="ctrl-btn" onclick="toggleAdminSpeaker('${roomCode}')" title="Speaker" id="spkBtn-${roomCode}">🔊</button>
+                <button class="ctrl-btn" onclick="toggleAdminMic('${roomCode}')" title="Mic ke Device" id="adminMicBtn-${roomCode}">🎤</button>
             </div>
-        </div>`;
+        </div>
+        <div id="voiceStatus-${roomCode}" style="padding:6px 14px;font-size:0.75rem;color:var(--text-secondary);text-align:center;">🔊 Speaker ON | 🎤 Mic OFF</div>
+    `;
     streamsGrid.appendChild(card);
 }
 

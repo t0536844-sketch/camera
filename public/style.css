@@ -228,6 +228,12 @@ input[type="text"]:focus {
     pointer-events: none;
 }
 
+.ctrl-btn.active {
+    background: rgba(108, 92, 231, 0.4);
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 0 2px rgba(108, 92, 231, 0.3);
+}
+
 /* === Video Wrapper === */
 .video-wrapper {
     position: relative;

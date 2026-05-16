@@ -20,6 +20,8 @@ const chatSection = document.getElementById('chatSection');
 const chatMessagesEl = document.getElementById('chatMessages');
 const chatInput = document.getElementById('chatInput');
 const chatSendBtn = document.getElementById('chatSendBtn');
+const adminMicBtn = document.getElementById('micBtn');
+const adminMicStatus = document.getElementById('micStatus');
 
 // === State ===
 let socket = null;
@@ -34,6 +36,9 @@ let videoTrack = null;
 let currentRoomCode = null;
 let adminCount = 0;
 const chatMessages = []; // [{from, message, type, timestamp}]
+let audioStream = null; // microphone stream for two-way voice
+let micActive = false;
+let adminVoiceChannel = null; // DataChannel for admin→device voice
 
 // WebRTC: peer connection per admin watching this client
 const peerConnections = {}; // adminSocketId -> RTCPeerConnection
@@ -251,6 +256,17 @@ async function createPeerConnectionForAdmin(adminId) {
         pc.addTrack(track, stream);
     });
 
+    // Listen for incoming audio from admin
+    pc.ontrack = (event) => {
+        if (event.track.kind === 'audio') {
+            console.log('[WebRTC] Received audio track from admin');
+            // Play the audio automatically
+            const audio = new Audio();
+            audio.srcObject = new MediaStream([event.track]);
+            audio.play().catch(e => console.warn('[WebRTC] Audio playback blocked:', e));
+        }
+    };
+
     // Send ICE candidates to admin
     pc.onicecandidate = (event) => {
         if (event.candidate && currentRoomCode) {
@@ -296,7 +312,7 @@ async function startCamera() {
 
         stream = await navigator.mediaDevices.getUserMedia({
             video: { facingMode: currentFacingMode, width: { ideal: 1280 }, height: { ideal: 720 } },
-            audio: false
+            audio: true
         });
 
         videoPreview.srcObject = stream;
@@ -487,6 +503,58 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+// === Microphone / Voice Chat ===
+async function toggleMic() {
+    if (!micActive) {
+        try {
+            audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            micActive = true;
+            adminMicBtn.classList.add('active');
+            adminMicStatus.textContent = '🎤 Mic ON';
+
+            // Add audio track to all existing peer connections
+            const audioTrack = audioStream.getAudioTracks()[0];
+            if (audioTrack) {
+                Object.values(peerConnections).forEach(pc => {
+                    const senders = pc.getSenders();
+                    const hasAudioSender = senders.some(s => s.track && s.track.kind === 'audio');
+                    if (!hasAudioSender) {
+                        pc.addTrack(audioTrack);
+                        console.log('[Mic] Audio track added to peer connection');
+                    }
+                });
+            }
+
+            // Notify admins
+            socket.emit('client-status', { roomCode: currentRoomCode, micActive: true });
+        } catch (err) {
+            console.error('[Mic] Error:', err);
+            alert('Tidak dapat mengakses mikrofon');
+        }
+    } else {
+        if (audioStream) {
+            audioStream.getTracks().forEach(t => t.stop());
+            audioStream = null;
+        }
+        micActive = false;
+        adminMicBtn.classList.remove('active');
+        adminMicStatus.textContent = '🎤 Mic OFF';
+
+        // Remove audio track from peer connections
+        Object.values(peerConnections).forEach(pc => {
+            const senders = pc.getSenders();
+            const audioSender = senders.find(s => s.track && s.track.kind === 'audio');
+            if (audioSender) {
+                pc.removeTrack(audioSender);
+            }
+        });
+
+        socket.emit('client-status', { roomCode: currentRoomCode, micActive: false });
+    }
+}
+
+window.toggleMic = toggleMic;
+
 // === Start Broadcast ===
 async function startBroadcast() {
     const roomCode = roomCodeInput.value.trim().toUpperCase();
@@ -527,12 +595,20 @@ document.getElementById('captureBtn').addEventListener('click', capturePhoto);
 document.getElementById('recordBtn').addEventListener('click', toggleRecording);
 document.getElementById('switchBtn').addEventListener('click', switchCamera);
 document.getElementById('flashBtn').addEventListener('click', toggleFlash);
+document.getElementById('micBtn').addEventListener('click', toggleMic);
 document.getElementById('stopBroadcastBtn').addEventListener('click', () => {
     stopCamera();
+    // Stop mic if active
+    if (audioStream) {
+        audioStream.getTracks().forEach(t => t.stop());
+        audioStream = null;
+        micActive = false;
+    }
     socket.emit('admin-leave-room', { roomCode: currentRoomCode });
     currentRoomCode = null;
     cameraSection.classList.add('hidden');
     shareSection.classList.add('hidden');
+    chatSection.classList.add('hidden');
     roomSetup.classList.remove('hidden');
     generateCode();
 });
