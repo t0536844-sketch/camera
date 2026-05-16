@@ -747,6 +747,129 @@ input[type="text"]:focus {
     50% { opacity: 0.3; }
 }
 
+/* === Chat Panel === */
+.chat-messages {
+    max-height: 300px;
+    overflow-y: auto;
+    padding: 12px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 10px;
+    margin-bottom: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.chat-message {
+    padding: 8px 12px;
+    border-radius: 10px;
+    max-width: 80%;
+    word-wrap: break-word;
+}
+
+.chat-message.admin {
+    align-self: flex-end;
+    background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+    color: white;
+}
+
+.chat-message.client {
+    align-self: flex-start;
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
+}
+
+.chat-message .chat-sender {
+    font-size: 0.7rem;
+    opacity: 0.7;
+    margin-bottom: 2px;
+}
+
+.chat-message .chat-text {
+    font-size: 0.9rem;
+}
+
+.chat-message .chat-time {
+    font-size: 0.65rem;
+    opacity: 0.5;
+    margin-top: 4px;
+    text-align: right;
+}
+
+.chat-empty {
+    text-align: center;
+    color: var(--text-secondary);
+    padding: 20px 0;
+}
+
+.chat-input-area {
+    display: flex;
+    gap: 8px;
+}
+
+.chat-input-area input {
+    flex: 1;
+    padding: 10px 14px;
+}
+
+.chat-input-area .btn {
+    padding: 10px 16px;
+}
+
+/* === Download Button for Screenshots === */
+.screenshot-item {
+    position: relative;
+}
+
+.screenshot-download-btn {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+    border: none;
+    color: white;
+    font-size: 0.8rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: var(--transition);
+}
+
+.screenshot-item:hover .screenshot-download-btn {
+    opacity: 1;
+}
+
+/* === Admin Recording Indicator === */
+.admin-recording-indicator {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(255, 0, 0, 0.7);
+    padding: 4px 10px;
+    border-radius: 10px;
+    font-size: 0.75rem;
+    color: white;
+    font-weight: 600;
+    z-index: 10;
+}
+
+.admin-recording-dot {
+    width: 8px;
+    height: 8px;
+    background: white;
+    border-radius: 50%;
+    animation: blink 1s infinite;
+}
+
 /* === Responsive === */
 @media (max-width: 480px) {
     .header h1 {
@@ -762,5 +885,8 @@ input[type="text"]:focus {
     }
     .gallery-grid {
         grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+    }
+    .chat-message {
+        max-width: 90%;
     }
 }

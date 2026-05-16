@@ -162,6 +162,26 @@ io.on('connection', (socket) => {
         }
     });
 
+    // === Chat Messages ===
+
+    // Client sends chat message
+    socket.on('client-chat', ({ roomCode, message, deviceName }) => {
+        const room = rooms[roomCode];
+        if (room) {
+            room.viewers.forEach(adminId => {
+                io.to(adminId).emit('chat-message', { roomCode, from: deviceName, message, type: 'client', timestamp: Date.now() });
+            });
+        }
+    });
+
+    // Admin sends chat message
+    socket.on('admin-chat', ({ roomCode, message }) => {
+        const room = rooms[roomCode];
+        if (room && room.broadcasterId) {
+            io.to(room.broadcasterId).emit('chat-message', { roomCode, from: socket.id.slice(0, 8), message, type: 'admin', timestamp: Date.now() });
+        }
+    });
+
     // Disconnect
     socket.on('disconnect', () => {
         console.log(`[Socket] Disconnected: ${socket.id}`);

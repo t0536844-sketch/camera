@@ -16,6 +16,10 @@ const shareLinkInput = document.getElementById('shareLink');
 const connectionStatus = document.getElementById('connectionStatus');
 const roomCodeDisplay = document.getElementById('roomCodeDisplay');
 const adminCountEl = document.getElementById('adminCount');
+const chatSection = document.getElementById('chatSection');
+const chatMessagesEl = document.getElementById('chatMessages');
+const chatInput = document.getElementById('chatInput');
+const chatSendBtn = document.getElementById('chatSendBtn');
 
 // === State ===
 let socket = null;
@@ -29,6 +33,7 @@ let flashActive = false;
 let videoTrack = null;
 let currentRoomCode = null;
 let adminCount = 0;
+const chatMessages = []; // [{from, message, type, timestamp}]
 
 // WebRTC: peer connection per admin watching this client
 const peerConnections = {}; // adminSocketId -> RTCPeerConnection
@@ -218,6 +223,15 @@ function connectSocket() {
     });
 
     socket.on('client-error', ({ message }) => { alert(message); });
+
+    // Chat messages from admin
+    socket.on('chat-message', ({ roomCode, from, message, type, timestamp }) => {
+        chatMessages.push({ from, message, type, timestamp });
+        renderChatMessages();
+
+        // Show chat section if hidden
+        chatSection.classList.remove('hidden');
+    });
 }
 
 // === WebRTC: Create connection per admin ===
@@ -438,6 +452,41 @@ function copyShareLink() {
     });
 }
 
+// === Chat Functions ===
+function renderChatMessages() {
+    if (chatMessages.length === 0) {
+        chatMessagesEl.innerHTML = '<div class="chat-empty">Belum ada pesan</div>';
+        return;
+    }
+
+    chatMessagesEl.innerHTML = chatMessages.map(msg => {
+        const isFromClient = msg.type === 'client';
+        const time = new Date(msg.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+        return `<div class="chat-message ${msg.type}">
+            <div class="chat-sender">${isFromClient ? 'Device' : msg.from}</div>
+            <div class="chat-text">${escapeHtml(msg.message)}</div>
+            <div class="chat-time">${time}</div>
+        </div>`;
+    }).join('');
+
+    chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+}
+
+function sendClientChat() {
+    const message = chatInput.value.trim();
+    if (!message || !currentRoomCode) return;
+
+    const deviceName = deviceNameInput.value.trim() || 'Camera Device';
+    socket.emit('client-chat', { roomCode: currentRoomCode, message, deviceName });
+    chatInput.value = '';
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
 // === Start Broadcast ===
 async function startBroadcast() {
     const roomCode = roomCodeInput.value.trim().toUpperCase();
@@ -490,6 +539,12 @@ document.getElementById('stopBroadcastBtn').addEventListener('click', () => {
 document.getElementById('copyLink').addEventListener('click', copyShareLink);
 document.getElementById('clearGallery').addEventListener('click', async () => {
     if (confirm('Hapus semua gallery?')) await clearGalleryDB();
+});
+
+// === Chat Event Listeners ===
+chatSendBtn.addEventListener('click', sendClientChat);
+chatInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') sendClientChat();
 });
 
 // === Init ===

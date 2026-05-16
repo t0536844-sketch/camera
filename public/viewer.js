@@ -5,17 +5,23 @@ const joinRoomSection = document.getElementById('joinRoomSection');
 const roomListSection = document.getElementById('roomListSection');
 const streamsSection = document.getElementById('streamsSection');
 const screenshotsSection = document.getElementById('screenshotsSection');
+const chatSection = document.getElementById('chatSection');
 const streamsGrid = document.getElementById('streamsGrid');
 const streamCount = document.getElementById('streamCount');
 const screenshots = document.getElementById('screenshots');
 const connectionStatus = document.getElementById('connectionStatus');
 const roomCodeInput = document.getElementById('roomCode');
+const chatInput = document.getElementById('chatInput');
+const chatSendBtn = document.getElementById('chatSendBtn');
 
 // === State ===
 let socket = null;
 let activeRooms = {}; // roomCode -> { deviceName, viewerCount, isStreaming }
 let monitoringRooms = new Set(); // rooms this admin is currently monitoring
 const peerConnections = {}; // roomCode -> RTCPeerConnection
+const adminRecorders = {}; // roomCode -> { mediaRecorder, chunks, startTime }
+const chatMessages = {}; // roomCode -> [{from, message, type, timestamp}]
+let currentChatRoom = null; // which room's chat is currently shown
 
 const rtcConfig = {
     iceServers: [
@@ -136,12 +142,50 @@ function connectSocket() {
     // Screenshots
     socket.on('new-screenshot', ({ roomCode, imageData }) => {
         screenshotsSection.classList.remove('hidden');
+        const wrapper = document.createElement('div');
+        wrapper.className = 'screenshot-item';
+        wrapper.style.position = 'relative';
+        wrapper.style.display = 'inline-block';
+        wrapper.style.width = '100%';
+
         const img = document.createElement('img');
         img.src = imageData;
         img.title = `Room: ${roomCode}`;
+        img.style.width = '100%';
+        img.style.cursor = 'pointer';
         img.onclick = () => openImageModal(imageData);
-        screenshots.prepend(img);
+
+        const downloadBtn = document.createElement('button');
+        downloadBtn.className = 'screenshot-download-btn';
+        downloadBtn.innerHTML = '⬇';
+        downloadBtn.title = 'Download';
+        downloadBtn.onclick = (e) => {
+            e.stopPropagation();
+            downloadImage(imageData, `screenshot-${roomCode}-${Date.now()}.png`);
+        };
+
+        wrapper.appendChild(img);
+        wrapper.appendChild(downloadBtn);
+        screenshots.prepend(wrapper);
         while (screenshots.children.length > 20) screenshots.removeChild(screenshots.lastChild);
+    });
+
+    // Chat messages
+    socket.on('chat-message', ({ roomCode, from, message, type, timestamp }) => {
+        // Store message
+        if (!chatMessages[roomCode]) chatMessages[roomCode] = [];
+        chatMessages[roomCode].push({ from, message, type, timestamp });
+
+        // Update chat UI if this room is shown
+        if (currentChatRoom === roomCode) {
+            renderChatMessages(roomCode);
+        }
+
+        // Show chat section if hidden
+        chatSection.classList.remove('hidden');
+
+        // Update room card to show chat notification
+        updateStreamCard(roomCode, null, null, true);
     });
 
     socket.on('admin-error', ({ message }) => { alert(message); });
@@ -245,6 +289,141 @@ function leaveRoom(roomCode) {
 window.joinRoom = joinRoom;
 window.leaveRoom = leaveRoom;
 
+// === Download Helper ===
+function downloadImage(dataUrl, filename) {
+    const a = document.createElement('a');
+    a.href = dataUrl;
+    a.download = filename;
+    a.click();
+}
+
+// === Admin-Side Recording ===
+function startAdminRecording(roomCode) {
+    const video = document.getElementById(`video-${roomCode}`);
+    if (!video || !video.srcObject) {
+        alert('Tidak ada stream aktif untuk direkam');
+        return;
+    }
+
+    if (adminRecorders[roomCode]) {
+        stopAdminRecording(roomCode);
+        return;
+    }
+
+    const chunks = [];
+    let mediaRecorder;
+
+    try {
+        mediaRecorder = new MediaRecorder(video.srcObject, {
+            mimeType: 'video/webm;codecs=vp9',
+            videoBitsPerSecond: 2500000
+        });
+    } catch (e) {
+        // Fallback if vp9 not supported
+        try {
+            mediaRecorder = new MediaRecorder(video.srcObject, { mimeType: 'video/webm' });
+        } catch (e2) {
+            mediaRecorder = new MediaRecorder(video.srcObject);
+        }
+    }
+
+    mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
+    };
+
+    mediaRecorder.onstop = () => {
+        const blob = new Blob(chunks, { type: 'video/webm' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `recording-${roomCode}-${Date.now()}.webm`;
+        a.click();
+        URL.revokeObjectURL(url);
+        delete adminRecorders[roomCode];
+        updateStreamCard(roomCode, false);
+    };
+
+    mediaRecorder.start(100);
+    adminRecorders[roomCode] = { mediaRecorder, chunks, startTime: Date.now() };
+    updateStreamCard(roomCode, true);
+    console.log(`[Admin] Started recording for room: ${roomCode}`);
+}
+
+function stopAdminRecording(roomCode) {
+    const recorder = adminRecorders[roomCode];
+    if (recorder && recorder.mediaRecorder.state === 'recording') {
+        recorder.mediaRecorder.stop();
+        console.log(`[Admin] Stopped recording for room: ${roomCode}`);
+    }
+}
+
+function toggleAdminRecording(roomCode) {
+    if (adminRecorders[roomCode]) {
+        stopAdminRecording(roomCode);
+    } else {
+        startAdminRecording(roomCode);
+    }
+}
+
+window.startAdminRecording = startAdminRecording;
+window.stopAdminRecording = stopAdminRecording;
+window.toggleAdminRecording = toggleAdminRecording;
+
+// === Chat Functions ===
+function openChat(roomCode) {
+    currentChatRoom = roomCode;
+    chatSection.classList.remove('hidden');
+    streamsSection.classList.remove('hidden');
+
+    if (!chatMessages[roomCode]) chatMessages[roomCode] = [];
+    renderChatMessages(roomCode);
+
+    // Scroll chat to bottom
+    const chatMessagesEl = document.getElementById('chatMessages');
+    chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+}
+
+function renderChatMessages(roomCode) {
+    const chatMessagesEl = document.getElementById('chatMessages');
+    const messages = chatMessages[roomCode] || [];
+
+    if (messages.length === 0) {
+        chatMessagesEl.innerHTML = '<div class="chat-empty">Belum ada pesan</div>';
+        return;
+    }
+
+    chatMessagesEl.innerHTML = messages.map(msg => {
+        const isFromAdmin = msg.type === 'admin';
+        const time = new Date(msg.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+        return `<div class="chat-message ${msg.type}">
+            <div class="chat-sender">${isFromAdmin ? 'Admin' : msg.from}</div>
+            <div class="chat-text">${escapeHtml(msg.message)}</div>
+            <div class="chat-time">${time}</div>
+        </div>`;
+    }).join('');
+
+    chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+}
+
+function sendAdminChat() {
+    if (!currentChatRoom) return;
+    const input = document.getElementById('chatInput');
+    const message = input.value.trim();
+    if (!message) return;
+
+    socket.emit('admin-chat', { roomCode: currentChatRoom, message });
+    input.value = '';
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+window.openChat = openChat;
+window.sendAdminChat = sendAdminChat;
+
 // === Stream Cards ===
 function createStreamCard(roomCode) {
     if (document.getElementById(`stream-${roomCode}`)) return;
@@ -266,15 +445,16 @@ function createStreamCard(roomCode) {
             </div>
             <div class="stream-controls">
                 <button class="ctrl-btn" onclick="sendCommand('${roomCode}', 'capture')" title="Foto">📷</button>
-                <button class="ctrl-btn" onclick="sendCommand('${roomCode}', 'record')" title="Rekam">⏺️</button>
+                <button class="ctrl-btn" onclick="toggleAdminRecording('${roomCode}')" title="Rekam di Admin" id="recBtn-${roomCode}">⏺️</button>
                 <button class="ctrl-btn" onclick="sendCommand('${roomCode}', 'switch')" title="Ganti Kamera">🔄</button>
                 <button class="ctrl-btn" onclick="sendCommand('${roomCode}', 'flash')" title="Flash">🔦</button>
+                <button class="ctrl-btn" onclick="openChat('${roomCode}')" title="Chat">💬</button>
             </div>
         </div>`;
     streamsGrid.appendChild(card);
 }
 
-function updateStreamCard(roomCode, isRecording = null, isLive = null) {
+function updateStreamCard(roomCode, isRecording = null, isLive = null, hasNewChat = false) {
     const statusEl = document.getElementById(`status-${roomCode}`);
     if (!statusEl) {
         // Card doesn't exist yet, create it
@@ -284,10 +464,10 @@ function updateStreamCard(roomCode, isRecording = null, isLive = null) {
 
     if (isLive === true) {
         statusEl.innerHTML = isRecording
-            ? '<span class="recording-badge">🔴 REC</span>'
+            ? '<span class="recording-badge">🔴 REC (Admin)</span>'
             : '<span class="live-badge">🟢 LIVE</span>';
     } else if (isRecording === true) {
-        statusEl.innerHTML = '<span class="recording-badge">🔴 REC</span>';
+        statusEl.innerHTML = '<span class="recording-badge">🔴 REC (Admin)</span>';
     } else if (isRecording === false) {
         statusEl.innerHTML = '<span class="live-badge">🟢 LIVE</span>';
     }
@@ -346,3 +526,9 @@ function init() {
 }
 
 init();
+
+// === Chat Event Listeners ===
+chatSendBtn.addEventListener('click', sendAdminChat);
+chatInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') sendAdminChat();
+});
